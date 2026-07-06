@@ -1,0 +1,23 @@
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { api } from '../../api';
+import { ErrorState, LoadingState } from '../../components/ui/State';
+import { formatDate, truncate } from '../../utils/helpers';
+
+export default function DashboardAdmin() {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  async function load() { try { setLoading(true); setError(''); const res = await api.get('/stats/overview'); setStats(res.data); } catch (err) { setError(err.message); } finally { setLoading(false); } }
+  useEffect(() => { load(); }, []);
+  if (loading) return <LoadingState />;
+  if (error) return <ErrorState message={error} onRetry={load} />;
+  const cards = [
+    ['Total Repository', stats.total_repository, 'folder_open', 'bg-blue-50 text-blue-600'],
+    ['Menunggu Verifikasi', stats.total_pending, 'hourglass_top', 'bg-amber-50 text-amber-600'],
+    ['Terverifikasi', stats.total_approved, 'verified', 'bg-emerald-50 text-emerald-600'],
+    ['Mahasiswa Upload', stats.total_students_uploaded, 'groups', 'bg-violet-50 text-violet-600'],
+  ];
+  return <div className="space-y-6"><section className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4">{cards.map(([label, value, icon, color]) => <div key={label} className="card"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-500">{label}</p><p className="text-3xl font-extrabold mt-1">{value ?? 0}</p></div><div className={`w-12 h-12 rounded-2xl ${color} flex items-center justify-center`}><span className="material-symbols-rounded">{icon}</span></div></div></div>)}</section><div className="grid xl:grid-cols-[1fr_0.9fr] gap-6"><section className="card"><div className="flex items-center justify-between mb-4"><div><h2 className="font-extrabold text-lg">Pengajuan Menunggu Verifikasi</h2><p className="text-sm text-gray-500">Admin dapat melihat detail dokumen sebelum menyetujui.</p></div><Link to="/admin/verifikasi" className="text-sm font-semibold text-primary">Lihat semua</Link></div><div className="space-y-3">{(stats.latest_pending || []).length === 0 ? <p className="text-sm text-gray-500">Tidak ada pengajuan pending.</p> : stats.latest_pending.map((repo) => <Link key={repo.id} to="/admin/verifikasi" className="block rounded-2xl border border-outline/50 p-4 hover:border-primary/40"><h3 className="font-bold">{truncate(repo.title, 75)}</h3><p className="text-xs text-gray-500 mt-2">{repo.submitter_name || '-'} · {formatDate(repo.research_date || repo.created_at)}</p></Link>)}</div></section><section className="card"><div className="flex items-center justify-between mb-4"><div><h2 className="font-extrabold text-lg">Mahasiswa yang Sudah Upload Tugas Akhir</h2><p className="text-sm text-gray-500">Rekap mahasiswa dan upload terakhir.</p></div><Link to="/admin/mahasiswa" className="text-sm font-semibold text-primary">Tabel</Link></div><div className="overflow-x-auto"><table className="w-full"><thead><tr><th className="table-th rounded-tl-xl">Mahasiswa</th><th className="table-th">Upload</th><th className="table-th rounded-tr-xl">Terakhir</th></tr></thead><tbody>{(stats.uploaded_students || []).filter((s) => s.upload_count > 0).slice(0, 6).map((s) => <tr key={s.id} className="table-row"><td className="table-td"><p className="font-semibold">{s.name}</p><p className="text-xs text-gray-400">{s.nim}</p></td><td className="table-td font-bold">{s.upload_count}</td><td className="table-td text-gray-500">{formatDate(s.last_upload_at)}</td></tr>)}</tbody></table></div></section></div><section className="grid lg:grid-cols-2 gap-6"><div className="card"><h2 className="font-extrabold text-lg mb-4">Distribusi Kategori</h2><div className="space-y-3">{(stats.by_category || []).map((item) => <Bar key={item.name} label={item.name} value={item.total} max={Math.max(...stats.by_category.map((i) => i.total), 1)} />)}</div></div><div className="card"><h2 className="font-extrabold text-lg mb-4">Tren Tugas Akhir Terverifikasi</h2><div className="space-y-3">{(stats.by_year || []).map((item) => <Bar key={item.year} label={item.year} value={item.total} max={Math.max(...stats.by_year.map((i) => i.total), 1)} />)}</div></div></section></div>;
+}
+function Bar({ label, value, max }) { return <div><div className="flex justify-between text-sm mb-1"><span className="font-semibold text-gray-600">{label}</span><span className="font-bold text-primary">{value}</span></div><div className="h-3 rounded-full bg-gray-100 overflow-hidden"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(8, (value / max) * 100)}%` }} /></div></div>; }
