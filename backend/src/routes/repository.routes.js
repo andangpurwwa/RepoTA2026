@@ -1,13 +1,51 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
+const crypto = require('crypto');
 const pool = require('../config/db');
+const supabase = require('../config/supabase');
 const uploadPdf = require('../middleware/upload');
 const jwt = require('jsonwebtoken');
 const { optionalAuth, requireAuth } = require('../middleware/auth');
 const { categorizeRepository } = require('../utils/categorize');
 
 const router = express.Router();
+
+const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'repota-documents';
+
+function sanitizeFileName(originalName = 'document.pdf') {
+  return originalName
+    .replace(/[^a-zA-Z0-9.\-_ ]/g, '')
+    .replace(/\s+/g, '-');
+}
+
+async function uploadPdfToStorage(file) {
+  const safeName = sanitizeFileName(file.originalname);
+  const objectPath = `repositories/${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+
+  const { error } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .upload(objectPath, file.buffer, {
+      contentType: file.mimetype,
+      upsert: false
+    });
+
+  if (error) {
+    throw new Error(`Gagal upload PDF ke Supabase Storage: ${error.message}`);
+  }
+
+  return objectPath;
+}
+
+async function deletePdfFromStorage(objectPath) {
+  if (!objectPath) return;
+
+  const { error } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .remove([objectPath]);
+
+  if (error) {
+    console.warn(`Gagal menghapus PDF dari Supabase Storage: ${error.message}`);
+  }
+}
 
 function mapStatusLabel(status) {
   const map = { draft: 'Draft', pending: 'Menunggu Verifikasi', approved: 'Terverifikasi', rejected: 'Ditolak', revision: 'Revisi' };
@@ -194,20 +232,75 @@ router.get('/pending', requireAuth(['admin']), async (req, res, next) => {
 router.get('/download/:fileName', async (req, res) => {
   try {
     let token = null;
+
     const authHeader = req.headers.authorization;
-    if (authHeader?.startsWith('Bearer ')) token = authHeader.split(' ')[1];
-    if (!token && req.query.token) token = req.query.token;
-    if (!token) return res.status(401).json({ message: 'Silakan login untuk membuka dokumen.' });
+
+    if (authHeader?.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    }
+
+    if (!token && req.query.token) {
+      token = req.query.token;
+    }
+
+    if (!token) {
+      return res.status(401).json({ message: 'Silakan login untuk membuka dokumen.' });
+    }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
-    const userResult = await pool.query('SELECT id, role FROM users WHERE id = $1', [decoded.id]);
-    const user = userResult.rows[0];
-    if (!user || !['mahasiswa', 'admin'].includes(user.role)) return res.status(403).json({ message: 'Akses dokumen ditolak.' });
 
-    const safeFileName = path.basename(req.params.fileName);
-    const fullPath = path.join(__dirname, '../../uploads', safeFileName);
-    if (!fs.existsSync(fullPath)) return res.status(404).json({ message: 'File tidak ditemukan.' });
-    return res.download(fullPath);
+    const userResult = await pool.query(
+      'SELECT id, role FROM users WHERE id = $1',
+      [decoded.id]
+    );
+
+    const user = userResult.rows[0];
+
+    if (!user || !['mahasiswa', 'admin'].includes(user.role)) {
+      return res.status(403).json({ message: 'Akses dokumen ditolak.' });
+    }
+
+    const objectPath = req.params.fileName;
+
+    const repoResult = await pool.query(
+      `SELECT id, file_name, file_path, status, submitted_by
+       FROM repositories
+       WHERE file_path = $1
+       LIMIT 1`,
+      [objectPath]
+    );
+
+    const repo = repoResult.rows[0];
+
+    if (!repo) {
+      return res.status(404).json({ message: 'Dokumen tidak ditemukan di database.' });
+    }
+
+    const isAdmin = user.role === 'admin';
+    const isOwner = Number(repo.submitted_by) === Number(user.id);
+    const isApproved = repo.status === 'approved';
+
+    if (!isAdmin && !isOwner && !isApproved) {
+      return res.status(403).json({ message: 'Dokumen belum dapat diakses.' });
+    }
+
+    const { data, error } = await supabase.storage
+      .from(STORAGE_BUCKET)
+      .createSignedUrl(repo.file_path, 60);
+
+    if (error) {
+      return res.status(404).json({
+        message: `File tidak ditemukan di Supabase Storage: ${error.message}`
+      });
+    }
+
+    const signedUrl = data?.signedUrl || data?.signedURL;
+
+    if (!signedUrl) {
+      return res.status(500).json({ message: 'Gagal membuat link dokumen.' });
+    }
+
+    return res.redirect(signedUrl);
   } catch (error) {
     return res.status(401).json({ message: 'Sesi tidak valid. Silakan login ulang.' });
   }
@@ -275,6 +368,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 
 router.post('/', requireAuth(['mahasiswa', 'admin']), uploadPdf.single('document'), async (req, res, next) => {
   const client = await pool.connect();
+  let uploadedStoragePath = null;
 
   try {
     const { title, abstract, research_date, advisor, author_name, category_id } = req.body;
@@ -296,6 +390,10 @@ router.post('/', requireAuth(['mahasiswa', 'admin']), uploadPdf.single('document
       if (!advisor) return res.status(400).json({ message: 'Dosen pembimbing wajib diisi.' });
       if (!finalAuthorName) return res.status(400).json({ message: 'Nama mahasiswa/penulis wajib diisi.' });
       if (!req.file) return res.status(400).json({ message: 'Dokumen PDF wajib diunggah.' });
+    }
+
+    if (req.file) {
+      uploadedStoragePath = await uploadPdfToStorage(req.file);
     }
 
     await client.query('BEGIN');
@@ -323,7 +421,7 @@ router.post('/', requireAuth(['mahasiswa', 'admin']), uploadPdf.single('document
         finalAuthorName,
         finalCategoryId,
         req.file?.originalname || null,
-        req.file?.filename || null,
+        uploadedStoragePath,
         status,
         req.user.id,
         status === 'approved' ? req.user.id : null,
@@ -342,6 +440,11 @@ router.post('/', requireAuth(['mahasiswa', 'admin']), uploadPdf.single('document
     });
   } catch (error) {
     await client.query('ROLLBACK');
+
+    if (uploadedStoragePath) {
+      await deletePdfFromStorage(uploadedStoragePath);
+    }
+
     return next(error);
   } finally {
     client.release();
@@ -472,15 +575,25 @@ router.patch('/:id/verify', requireAuth(['admin']), async (req, res, next) => {
 
 router.delete('/:id', requireAuth(['admin']), async (req, res, next) => {
   try {
-    const result = await pool.query('DELETE FROM repositories WHERE id = $1 RETURNING file_path', [req.params.id]);
-    if (!result.rows[0]) return res.status(404).json({ message: 'Repository tidak ditemukan.' });
-    const filePath = result.rows[0].file_path;
-    if (filePath) {
-      const fullPath = path.join(__dirname, '../../uploads', filePath);
-      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+    const result = await pool.query(
+      'DELETE FROM repositories WHERE id = $1 RETURNING file_path',
+      [req.params.id]
+    );
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ message: 'Repository tidak ditemukan.' });
     }
+
+    const filePath = result.rows[0].file_path;
+
+    if (filePath) {
+      await deletePdfFromStorage(filePath);
+    }
+
     return res.json({ message: 'Repository berhasil dihapus.' });
-  } catch (error) { return next(error); }
+  } catch (error) {
+    return next(error);
+  }
 });
 
 module.exports = router;

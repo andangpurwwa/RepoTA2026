@@ -16,7 +16,21 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(helmet({ crossOriginResourcePolicy: false }));
-app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true }));
+
+const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim());
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  credentials: true
+}));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
@@ -61,6 +75,6 @@ app.use((error, req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`RepoTA API berjalan di http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`RepoTA API berjalan di http://0.0.0.0:${PORT}`);
 });
