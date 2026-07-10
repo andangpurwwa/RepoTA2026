@@ -1,3 +1,11 @@
+
+export function countWords(value = '') {
+  return String(value || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
 export function formatDate(value) {
   if (!value) return '-';
   const date = new Date(value);

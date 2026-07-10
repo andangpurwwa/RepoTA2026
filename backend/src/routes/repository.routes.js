@@ -6,10 +6,22 @@ const uploadPdf = require('../middleware/upload');
 const jwt = require('jsonwebtoken');
 const { optionalAuth, requireAuth } = require('../middleware/auth');
 const { categorizeRepository } = require('../utils/categorize');
+const {
+  cleanString,
+  isValidDate,
+  isValidPhone,
+  ensureValidation,
+} = require('../utils/validation');
 
 const router = express.Router();
 
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'repota-documents';
+const VALID_STATUSES = ['draft', 'pending', 'approved', 'rejected', 'revision'];
+const jwtSecret = process.env.JWT_SECRET;
+
+if (!jwtSecret) {
+  throw new Error('JWT_SECRET wajib diisi di backend/.env atau environment deployment.');
+}
 
 function sanitizeFileName(originalName = 'document.pdf') {
   return originalName
@@ -95,13 +107,32 @@ function selectedFields(isGuest) {
   `;
 }
 
-/**
- * GET /api/repositories
- * Default:
- * - 100 repository per halaman
- * - page=1
- * - limit maksimal 100
- */
+function validateRepositoryInput({ title, abstract, researchDate, advisor, authorName, categoryId, file, requireFile }) {
+  const errors = [];
+
+  if (!title) errors.push('Judul Tugas Akhir wajib diisi.');
+  if (title && title.length < 10) errors.push('Judul Tugas Akhir minimal 10 karakter.');
+  if (title && title.length > 250) errors.push('Judul Tugas Akhir maksimal 250 karakter.');
+
+  if (!researchDate) errors.push('Tanggal Tugas Akhir wajib diisi dan harus valid.');
+
+  if (!abstract) errors.push('Abstrak wajib diisi.');
+  if (abstract && abstract.length < 50) errors.push('Abstrak minimal 50 karakter agar data repository informatif.');
+
+  if (!advisor) errors.push('Dosen pembimbing wajib diisi.');
+  if (advisor && advisor.length < 3) errors.push('Nama dosen pembimbing terlalu pendek.');
+
+  if (!authorName) errors.push('Nama mahasiswa/penulis wajib diisi.');
+
+  if (categoryId !== null && categoryId !== undefined && !toPositiveInt(categoryId)) {
+    errors.push('Kategori tidak valid.');
+  }
+
+  if (requireFile && !file) errors.push('Dokumen PDF wajib diunggah.');
+
+  ensureValidation(errors);
+}
+
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
     const {
@@ -487,6 +518,153 @@ router.post('/', requireAuth(['mahasiswa', 'admin']), uploadPdf.single('document
       data: {
         ...result.rows[0],
         status_label: mapStatusLabel(status),
+      },
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    if (uploadedStoragePath) {
+      await deletePdfFromStorage(uploadedStoragePath);
+    }
+
+    return next(error);
+  } finally {
+    client.release();
+  }
+});
+
+
+router.put('/:id/resubmit', requireAuth(['mahasiswa']), uploadPdf.single('document'), async (req, res, next) => {
+  const client = await pool.connect();
+  let uploadedStoragePath = null;
+  let oldStoragePath = null;
+
+  try {
+    const repositoryId = toPositiveInt(req.params.id);
+
+    if (!repositoryId) {
+      return res.status(400).json({ message: 'ID repository tidak valid.' });
+    }
+
+    const finalTitle = cleanString(req.body.title);
+    const finalAbstract = cleanString(req.body.abstract);
+    const finalDate = normalizeDate(req.body.research_date);
+    const finalAdvisor = cleanString(req.body.advisor);
+    const finalCategoryId = req.body.category_id
+      ? toPositiveInt(req.body.category_id)
+      : null;
+
+    validateRepositoryInput({
+      title: finalTitle,
+      abstract: finalAbstract,
+      researchDate: finalDate,
+      advisor: finalAdvisor,
+      authorName: req.user.name,
+      categoryId: req.body.category_id || null,
+      file: req.file,
+      requireFile: false,
+    });
+
+    if (req.file) {
+      uploadedStoragePath = await uploadPdfToStorage(req.file);
+    }
+
+    await client.query('BEGIN');
+
+    const beforeResult = await client.query(
+      `SELECT id, status, submitted_by, file_name, file_path
+       FROM repositories
+       WHERE id = $1
+       FOR UPDATE`,
+      [repositoryId]
+    );
+
+    const before = beforeResult.rows[0];
+
+    if (!before) {
+      await client.query('ROLLBACK');
+      if (uploadedStoragePath) await deletePdfFromStorage(uploadedStoragePath);
+      return res.status(404).json({ message: 'Repository tidak ditemukan.' });
+    }
+
+    const isOwner = Number(before.submitted_by) === Number(req.user.id);
+
+    if (!isOwner) {
+      await client.query('ROLLBACK');
+      if (uploadedStoragePath) await deletePdfFromStorage(uploadedStoragePath);
+      return res.status(403).json({ message: 'Kamu tidak memiliki akses untuk memperbaiki repository ini.' });
+    }
+
+    if (!['revision', 'rejected'].includes(before.status)) {
+      await client.query('ROLLBACK');
+      if (uploadedStoragePath) await deletePdfFromStorage(uploadedStoragePath);
+      return res.status(400).json({
+        message: 'Repository hanya dapat diperbaiki ketika berstatus Revisi atau Ditolak.',
+      });
+    }
+
+    let categoryId = finalCategoryId;
+    if (!categoryId) {
+      const detected = await categorizeRepository(client, finalTitle, finalAbstract);
+      categoryId = detected?.category_id || null;
+    }
+
+    oldStoragePath = before.file_path;
+
+    const result = await client.query(
+      `UPDATE repositories
+       SET
+         title = $1,
+         abstract = $2,
+         research_year = $3,
+         research_date = $4,
+         advisor = $5,
+         category_id = $6,
+         file_name = COALESCE($7, file_name),
+         file_path = COALESCE($8, file_path),
+         status = 'pending',
+         rejection_note = NULL,
+         approved_by = NULL,
+         approved_at = NULL,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE id = $9
+       RETURNING *`,
+      [
+        finalTitle,
+        finalAbstract,
+        yearFromDate(finalDate),
+        finalDate,
+        finalAdvisor,
+        categoryId,
+        req.file?.originalname || null,
+        uploadedStoragePath,
+        repositoryId,
+      ]
+    );
+
+    await insertVerificationLog(client, {
+      repositoryId,
+      adminId: null,
+      action: 'student_resubmit',
+      oldStatus: before.status,
+      newStatus: 'pending',
+      note: 'Mahasiswa mengirim ulang perbaikan repository.',
+      metadata: {
+        replaced_document: Boolean(req.file),
+      },
+    });
+
+    await client.query('COMMIT');
+
+    if (uploadedStoragePath && oldStoragePath && oldStoragePath !== uploadedStoragePath) {
+      await deletePdfFromStorage(oldStoragePath);
+    }
+
+    return res.json({
+      message: 'Perbaikan berhasil dikirim ulang untuk diverifikasi admin.',
+      data: {
+        ...result.rows[0],
+        status_label: mapStatusLabel(result.rows[0].status),
       },
     });
   } catch (error) {
