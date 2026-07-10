@@ -1,11 +1,49 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../api';
 import Modal from '../../components/ui/Modal';
-import Toast from '../../components/ui/Toast';
-import { EmptyState, ErrorState, LoadingState } from '../../components/ui/State';
-import { formatDate, truncate, getErrorMessage } from '../../utils/helpers';
+import {
+  EmptyState,
+  ErrorState,
+  LoadingState,
+} from '../../components/ui/State';
+import {
+  formatDate,
+  getErrorMessage,
+  truncate,
+} from '../../utils/helpers';
 
 const MIN_ADMIN_NOTE = 5;
+const MAX_ADMIN_NOTE = 1000;
+
+const STATUS_CONFIG = {
+  revision: {
+    fallbackMessage: 'Pengajuan dikirim ke mahasiswa untuk diperbaiki.',
+  },
+  rejected: {
+    fallbackMessage: 'Pengajuan berhasil ditolak.',
+  },
+  approved: {
+    fallbackMessage: 'Pengajuan berhasil disetujui.',
+  },
+};
+
+function normalizeListResponse(response) {
+  const payload = response?.data ?? response;
+
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.items)) return payload.items;
+
+  return [];
+}
+
+function getResponseMessage(response, fallback) {
+  return (
+    response?.data?.message ||
+    response?.message ||
+    fallback
+  );
+}
 
 export default function Verifikasi() {
   const [items, setItems] = useState([]);
@@ -15,35 +53,64 @@ export default function Verifikasi() {
   const [processing, setProcessing] = useState(false);
   const [pageError, setPageError] = useState('');
   const [formError, setFormError] = useState('');
-  const [toast, setToast] = useState('');
+  const [toast, setToast] = useState(null);
+
   const noteRef = useRef(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       setLoading(true);
       setPageError('');
 
-      const res = await api.get('/repositories/pending');
-
-      setItems(res.data || []);
-    } catch (err) {
-      setPageError(getErrorMessage(err));
+      const response = await api.get('/repositories/pending');
+      setItems(normalizeListResponse(response));
+    } catch (error) {
+      setPageError(getErrorMessage(error));
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
+
+  useEffect(() => {
+    if (!toast) return undefined;
+
+    const timer = window.setTimeout(() => {
+      setToast(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  function openDetail(repository) {
+    setSelected(repository);
+    setNote('');
+    setFormError('');
+  }
+
+  function closeDetail() {
+    if (processing) return;
+
+    setSelected(null);
+    setNote('');
+    setFormError('');
+  }
 
   async function verify(id, status) {
     const trimmedNote = note.trim();
-    const requiresNote = ['revision', 'rejected'].includes(status);
+    const requiresNote = status === 'revision' || status === 'rejected';
+
+    if (!STATUS_CONFIG[status]) {
+      setFormError('Status verifikasi tidak valid.');
+      return;
+    }
 
     if (requiresNote && trimmedNote.length < MIN_ADMIN_NOTE) {
       setFormError(
-        `Tuliskan catatan yang jelas minimal ${MIN_ADMIN_NOTE} karakter sebelum memilih Revisi atau Tolak.`
+        `Catatan wajib diisi minimal ${MIN_ADMIN_NOTE} karakter untuk status Revisi atau Tolak.`
       );
       noteRef.current?.focus();
       return;
@@ -52,37 +119,44 @@ export default function Verifikasi() {
     try {
       setProcessing(true);
       setFormError('');
-      setToast('');
+      setToast(null);
 
-      const res = await api.patch(`/repositories/${id}/verify`, {
+      const response = await api.patch(`/repositories/${id}/verify`, {
         status,
         rejection_note: requiresNote ? trimmedNote : '',
       });
 
-      setItems((previous) => previous.filter((item) => item.id !== id));
+      setItems((currentItems) =>
+        currentItems.filter((item) => item.id !== id)
+      );
+
       setSelected(null);
       setNote('');
-      setToast(
-        res.message ||
-          (status === 'revision'
-            ? 'Pengajuan dikirim ke mahasiswa untuk diperbaiki.'
-            : status === 'rejected'
-              ? 'Pengajuan berhasil ditolak.'
-              : 'Pengajuan berhasil disetujui.')
-      );
-    } catch (err) {
-      setFormError(getErrorMessage(err));
+
+      setToast({
+        type: 'success',
+        message: getResponseMessage(
+          response,
+          STATUS_CONFIG[status].fallbackMessage
+        ),
+      });
+    } catch (error) {
+      setFormError(getErrorMessage(error));
     } finally {
       setProcessing(false);
     }
   }
 
+  const noteLength = note.trim().length;
+  const noteIsValid = noteLength >= MIN_ADMIN_NOTE;
+
   return (
     <div className="space-y-5">
       {toast && (
-        <Toast
-          message={toast}
-          onClose={() => setToast('')}
+        <ToastNotice
+          type={toast.type}
+          message={toast.message}
+          onClose={() => setToast(null)}
         />
       )}
 
@@ -116,47 +190,52 @@ export default function Verifikasi() {
               </thead>
 
               <tbody>
-                {items.map((repo) => (
+                {items.map((repository) => (
                   <tr
                     className="table-row"
-                    key={repo.id}
+                    key={repository.id}
                   >
-                    <td className="table-td font-semibold max-w-[420px]">
-                      {truncate(repo.title, 80)}
+                    <td className="table-td max-w-[420px] font-semibold">
+                      {truncate(repository.title || '-', 80)}
                     </td>
 
                     <td className="table-td">
                       <p className="font-semibold">
-                        {repo.submitter_name || repo.author_name || '-'}
+                        {repository.submitter_name ||
+                          repository.author_name ||
+                          '-'}
                       </p>
 
                       <p className="text-xs text-gray-400">
-                        {repo.submitter_nim || repo.nim || '-'}
+                        {repository.submitter_nim ||
+                          repository.nim ||
+                          '-'}
                       </p>
 
                       <p className="text-xs text-gray-400">
-                        {repo.submitter_email || repo.email_uad || '-'}
+                        {repository.submitter_email ||
+                          repository.email_uad ||
+                          '-'}
                       </p>
                     </td>
 
                     <td className="table-td text-gray-500">
-                      {repo.category_name || '-'}
+                      {repository.category_name || '-'}
                     </td>
 
                     <td className="table-td text-gray-500">
-                      {formatDate(repo.research_date || repo.created_at)}
+                      {formatDate(
+                        repository.research_date ||
+                          repository.created_at
+                      )}
                     </td>
 
                     <td className="table-td">
                       <div className="flex justify-end">
                         <button
                           type="button"
-                          onClick={() => {
-                            setSelected(repo);
-                            setFormError('');
-                            setNote('');
-                          }}
                           className="btn-primary py-1.5 text-xs"
+                          onClick={() => openDetail(repository)}
                         >
                           <span className="material-symbols-rounded text-[16px]">
                             visibility
@@ -177,79 +256,110 @@ export default function Verifikasi() {
         <Modal
           wide
           title="Detail Verifikasi Repository"
-          onClose={() => {
-            setSelected(null);
-            setNote('');
-            setFormError('');
-          }}
+          onClose={closeDetail}
         >
-          <Detail repo={selected} />
+          <Detail repository={selected} />
 
           <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-            <label className="label">
-              Catatan Admin untuk Revisi/Tolak <span className="text-red-500">*</span>
+            <label
+              className="label"
+              htmlFor="admin-verification-note"
+            >
+              Catatan Admin untuk Revisi/Tolak{' '}
+              <span className="text-red-500">*</span>
             </label>
 
             <textarea
+              id="admin-verification-note"
               ref={noteRef}
-              className={`input min-h-24 ${formError ? 'border-red-400 focus:border-red-500' : ''}`}
+              className={`input min-h-24 ${
+                formError
+                  ? 'border-red-400 focus:border-red-500'
+                  : ''
+              }`}
               value={note}
+              disabled={processing}
+              maxLength={MAX_ADMIN_NOTE}
+              placeholder="Contoh: Perbaiki abstrak agar minimal 100 kata dan unggah kembali PDF yang benar."
               onChange={(event) => {
                 const value = event.target.value;
                 setNote(value);
-                if (value.trim().length >= MIN_ADMIN_NOTE) setFormError('');
+
+                if (value.trim().length >= MIN_ADMIN_NOTE) {
+                  setFormError('');
+                }
               }}
-              placeholder="Contoh: Perbaiki abstrak agar minimal 100 kata dan unggah kembali PDF yang benar."
-              maxLength={1000}
             />
 
             <div className="mt-2 flex flex-col gap-1 text-xs sm:flex-row sm:items-center sm:justify-between">
-              <p className={formError ? 'font-semibold text-red-600' : 'text-amber-800'}>
-                {formError || 'Catatan wajib diisi saat memilih Revisi atau Tolak agar mahasiswa mengetahui bagian yang harus diperbaiki.'}
+              <p
+                className={
+                  formError
+                    ? 'font-semibold text-red-600'
+                    : 'text-amber-800'
+                }
+              >
+                {formError ||
+                  'Catatan wajib diisi saat memilih Revisi atau Tolak agar mahasiswa mengetahui bagian yang harus diperbaiki.'}
               </p>
-              <p className={`shrink-0 font-bold ${note.trim().length >= MIN_ADMIN_NOTE ? 'text-emerald-600' : 'text-amber-700'}`}>
-                {note.trim().length}/{MIN_ADMIN_NOTE} karakter minimum
+
+              <p
+                className={`shrink-0 font-bold ${
+                  noteIsValid
+                    ? 'text-emerald-600'
+                    : 'text-amber-700'
+                }`}
+              >
+                {noteLength}/{MIN_ADMIN_NOTE} karakter minimum
               </p>
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row justify-end gap-2 mt-5">
+          <div className="mt-5 flex flex-col justify-end gap-2 sm:flex-row">
             <button
               type="button"
+              className="btn-secondary justify-center disabled:cursor-not-allowed disabled:opacity-60"
               disabled={processing}
-              className="btn-secondary justify-center"
-              title={note.trim().length < MIN_ADMIN_NOTE ? `Isi catatan minimal ${MIN_ADMIN_NOTE} karakter` : 'Kirim kembali kepada mahasiswa untuk diperbaiki'}
+              title={
+                noteIsValid
+                  ? 'Kirim kembali kepada mahasiswa untuk diperbaiki'
+                  : `Isi catatan minimal ${MIN_ADMIN_NOTE} karakter`
+              }
               onClick={() => verify(selected.id, 'revision')}
             >
               <span className="material-symbols-rounded text-[18px]">
                 edit_note
               </span>
-              Revisi
+              {processing ? 'Memproses...' : 'Revisi'}
             </button>
 
             <button
               type="button"
+              className="btn-danger justify-center disabled:cursor-not-allowed disabled:opacity-60"
               disabled={processing}
-              className="btn-danger justify-center"
-              title={note.trim().length < MIN_ADMIN_NOTE ? `Isi catatan minimal ${MIN_ADMIN_NOTE} karakter` : 'Tolak pengajuan dengan catatan'}
+              title={
+                noteIsValid
+                  ? 'Tolak pengajuan dengan catatan'
+                  : `Isi catatan minimal ${MIN_ADMIN_NOTE} karakter`
+              }
               onClick={() => verify(selected.id, 'rejected')}
             >
               <span className="material-symbols-rounded text-[18px]">
                 cancel
               </span>
-              Tolak
+              {processing ? 'Memproses...' : 'Tolak'}
             </button>
 
             <button
               type="button"
+              className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
               disabled={processing}
-              className="btn-primary justify-center"
               onClick={() => verify(selected.id, 'approved')}
             >
               <span className="material-symbols-rounded text-[18px]">
                 check_circle
               </span>
-              Setujui
+              {processing ? 'Memproses...' : 'Setujui'}
             </button>
           </div>
         </Modal>
@@ -258,80 +368,101 @@ export default function Verifikasi() {
   );
 }
 
-function Detail({ repo }) {
-  const url = repo.file_path ? api.fileUrl(repo.file_path) : null;
+function Detail({ repository }) {
+  const documentUrl = repository.file_path
+    ? api.fileUrl(repository.file_path)
+    : null;
 
   return (
     <div className="space-y-4">
       <div>
         <p className="text-xs text-gray-500">Judul</p>
-
-        <h3 className="font-extrabold text-xl">
-          {repo.title || '-'}
+        <h3 className="text-xl font-extrabold">
+          {repository.title || '-'}
         </h3>
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         <Info
           label="Mahasiswa"
-          value={repo.author_name || repo.submitter_name || '-'}
+          value={
+            repository.author_name ||
+            repository.submitter_name ||
+            '-'
+          }
         />
 
         <Info
           label="NIM"
-          value={repo.nim || repo.submitter_nim || '-'}
+          value={
+            repository.nim ||
+            repository.submitter_nim ||
+            '-'
+          }
         />
 
         <Info
           label="Email UAD"
-          value={repo.email_uad || repo.submitter_email || '-'}
+          value={
+            repository.email_uad ||
+            repository.submitter_email ||
+            '-'
+          }
         />
 
         <Info
           label="Dosen Pembimbing"
-          value={repo.advisor || '-'}
+          value={repository.advisor || '-'}
         />
 
         <Info
           label="Tanggal Tugas Akhir"
-          value={formatDate(repo.research_date)}
+          value={formatDate(
+            repository.research_date ||
+              repository.created_at
+          )}
         />
 
         <Info
           label="Kategori"
-          value={repo.category_name || 'Otomatis setelah disetujui'}
+          value={
+            repository.category_name ||
+            'Otomatis setelah disetujui'
+          }
         />
       </div>
 
       <div>
         <p className="text-xs text-gray-500">Abstrak</p>
-
-        <p className="text-sm text-gray-600 leading-7 mt-1 whitespace-pre-line">
-          {repo.abstract || '-'}
+        <p className="mt-1 whitespace-pre-line text-sm leading-7 text-gray-600">
+          {repository.abstract || '-'}
         </p>
       </div>
 
-      <div className="rounded-2xl bg-gray-50 border border-outline/40 p-4 flex items-center justify-between gap-3">
-        <div>
+      <div className="flex flex-col gap-3 rounded-2xl border border-outline/40 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <p className="font-bold">Dokumen PDF</p>
-
-          <p className="text-sm text-gray-500">
-            {repo.file_name || 'Tidak ada file'}
+          <p className="truncate text-sm text-gray-500">
+            {repository.file_name || 'Tidak ada file'}
           </p>
         </div>
 
-        {url && (
+        {documentUrl ? (
           <a
-            className="btn-secondary"
+            className="btn-secondary justify-center"
+            href={documentUrl}
             target="_blank"
             rel="noreferrer"
-            href={url}
           >
             <span className="material-symbols-rounded text-[18px]">
               open_in_new
             </span>
             Buka Dokumen
           </a>
+        ) : (
+          <span className="text-sm font-semibold text-gray-400">
+            Dokumen tidak tersedia
+          </span>
         )}
       </div>
     </div>
@@ -340,14 +471,43 @@ function Detail({ repo }) {
 
 function Info({ label, value }) {
   return (
-    <div className="rounded-2xl bg-gray-50 border border-outline/40 p-3">
-      <p className="text-xs text-gray-500">
-        {label}
-      </p>
+    <div className="rounded-2xl border border-outline/40 bg-gray-50 p-3">
+      <p className="text-xs text-gray-500">{label}</p>
+      <p className="mt-1 break-words font-semibold">{value}</p>
+    </div>
+  );
+}
 
-      <p className="font-semibold mt-1 break-words">
-        {value}
-      </p>
+function ToastNotice({ message, type = 'success', onClose }) {
+  const isSuccess = type === 'success';
+
+  return (
+    <div
+      role="status"
+      className={`flex items-start justify-between gap-3 rounded-2xl border p-4 shadow-sm ${
+        isSuccess
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          : 'border-red-200 bg-red-50 text-red-700'
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <span className="material-symbols-rounded text-[22px]">
+          {isSuccess ? 'check_circle' : 'error'}
+        </span>
+
+        <p className="font-semibold">{message}</p>
+      </div>
+
+      <button
+        type="button"
+        className="rounded-lg p-1 transition hover:bg-black/5"
+        aria-label="Tutup notifikasi"
+        onClick={onClose}
+      >
+        <span className="material-symbols-rounded text-[20px]">
+          close
+        </span>
+      </button>
     </div>
   );
 }
