@@ -149,12 +149,7 @@ export default function ProfileMahasiswa() {
         identifier: user?.email,
       });
 
-      setOtp({
-        code: '',
-        new_password: '',
-        confirm: '',
-        sent: true,
-      });
+      setOtp((f) => ({ ...f, sent: true }));
       setMessage(res.message || 'Kode OTP sudah dikirim ke email kamu.');
     } catch (err) {
       setError(getErrorMessage(err));
@@ -443,8 +438,6 @@ export default function ProfileMahasiswa() {
               type="button"
               onClick={() => {
                 setMode('otp');
-                setOtp({ ...emptyOtp });
-                setManual({ ...emptyManual });
                 setError('');
                 setMessage('');
               }}
@@ -461,8 +454,6 @@ export default function ProfileMahasiswa() {
               type="button"
               onClick={() => {
                 setMode('manual');
-                setOtp({ ...emptyOtp });
-                setManual({ ...emptyManual });
                 setError('');
                 setMessage('');
               }}
@@ -478,12 +469,7 @@ export default function ProfileMahasiswa() {
         </div>
 
         {mode === 'otp' ? (
-          <form
-            onSubmit={changeByOtp}
-            className="space-y-4"
-            autoComplete="off"
-            data-lpignore="true"
-          >
+          <form onSubmit={changeByOtp} className="space-y-4">
             <div className="rounded-2xl bg-gray-50 border border-outline/40 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <p className="font-bold">Kirim OTP ke email akun</p>
@@ -515,48 +501,34 @@ export default function ProfileMahasiswa() {
 
             <div className="grid sm:grid-cols-3 gap-4">
               <Field
-                name="repota_otp_code"
                 label="Kode OTP"
                 value={otp.code}
                 onChange={(value) =>
-                  setOtp((f) => ({
-                    ...f,
-                    code: value.replace(/\D/g, '').slice(0, 6),
-                  }))
+                  setOtp((f) => ({ ...f, code: value }))
                 }
-                placeholder={otp.sent ? 'Masukkan 6 digit OTP' : 'Kirim OTP terlebih dahulu'}
+                placeholder="123456"
                 maxLength={6}
-                inputMode="numeric"
-                pattern="[0-9]*"
-                autoComplete="off"
-                disabled={!otp.sent}
                 className="tracking-[0.45em] font-bold"
               />
 
               <Field
-                name="repota_otp_new_password"
                 type="password"
                 label="Password Baru"
                 value={otp.new_password}
                 onChange={(value) =>
                   setOtp((f) => ({ ...f, new_password: value }))
                 }
-                placeholder={otp.sent ? 'Minimal 8 karakter' : 'Kirim OTP terlebih dahulu'}
-                autoComplete="new-password"
-                disabled={!otp.sent}
+                placeholder="Minimal 8 karakter"
               />
 
               <Field
-                name="repota_otp_confirm_password"
                 type="password"
                 label="Konfirmasi"
                 value={otp.confirm}
                 onChange={(value) =>
                   setOtp((f) => ({ ...f, confirm: value }))
                 }
-                placeholder={otp.sent ? 'Ulangi password baru' : 'Kirim OTP terlebih dahulu'}
-                autoComplete="new-password"
-                disabled={!otp.sent}
+                placeholder="Ulangi password"
               />
             </div>
 
@@ -571,27 +543,18 @@ export default function ProfileMahasiswa() {
             </button>
           </form>
         ) : (
-          <form
-            onSubmit={changeManual}
-            className="space-y-4"
-            autoComplete="off"
-            data-lpignore="true"
-          >
+          <form onSubmit={changeManual} className="space-y-4">
             <div className="grid sm:grid-cols-3 gap-4">
               <Field
-                name="repota_current_password"
                 type="password"
                 label="Password Lama"
                 value={manual.current_password}
                 onChange={(value) =>
                   setManual((f) => ({ ...f, current_password: value }))
                 }
-                placeholder="Masukkan password lama"
-                autoComplete="off"
               />
 
               <Field
-                name="repota_manual_new_password"
                 type="password"
                 label="Password Baru"
                 value={manual.new_password}
@@ -599,19 +562,15 @@ export default function ProfileMahasiswa() {
                   setManual((f) => ({ ...f, new_password: value }))
                 }
                 placeholder="Minimal 8 karakter"
-                autoComplete="new-password"
               />
 
               <Field
-                name="repota_manual_confirm_password"
                 type="password"
                 label="Konfirmasi"
                 value={manual.confirm}
                 onChange={(value) =>
                   setManual((f) => ({ ...f, confirm: value }))
                 }
-                placeholder="Ulangi password baru"
-                autoComplete="new-password"
               />
             </div>
 
@@ -641,7 +600,6 @@ function Info({ label, value }) {
 }
 
 function Field({
-  name,
   label,
   value,
   onChange,
@@ -649,10 +607,6 @@ function Field({
   placeholder = '',
   maxLength,
   className = '',
-  autoComplete = 'off',
-  inputMode,
-  pattern,
-  disabled = false,
 }) {
   return (
     <div>
@@ -661,21 +615,12 @@ function Field({
       </label>
 
       <input
-        name={name}
         type={type}
-        className={`input ${disabled ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''} ${className}`}
+        className={`input ${className}`}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         maxLength={maxLength}
-        autoComplete={autoComplete}
-        inputMode={inputMode}
-        pattern={pattern}
-        disabled={disabled}
-        spellCheck="false"
-        data-lpignore="true"
-        data-1p-ignore="true"
-        data-bwignore="true"
       />
     </div>
   );
