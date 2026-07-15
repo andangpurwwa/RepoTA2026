@@ -27,38 +27,25 @@ export default function ProfileMahasiswa() {
   const { user, saveUser } = useAuth();
 
   const [mode, setMode] = useState('otp');
-
-  const [profileForm, setProfileForm] = useState({
-    name: '',
-  });
-
+  const [profileForm, setProfileForm] = useState({ name: '' });
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [otp, setOtp] = useState(createEmptyOtp);
   const [manual, setManual] = useState(createEmptyManual);
 
-  const [loading, setLoading] = useState(false);
+  // Setiap fitur memiliki loading sendiri agar tidak saling memengaruhi.
+  const [profileLoading, setProfileLoading] = useState(false);
   const [photoLoading, setPhotoLoading] = useState(false);
+  const [otpSending, setOtpSending] = useState(false);
+  const [passwordLoading, setPasswordLoading] = useState(false);
 
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-
-  /*
-  |--------------------------------------------------------------------------
-  | Memuat data profil
-  |--------------------------------------------------------------------------
-  */
 
   useEffect(() => {
     setProfileForm({
       name: user?.name || '',
     });
   }, [user]);
-
-  /*
-  |--------------------------------------------------------------------------
-  | Membersihkan autofill browser saat halaman pertama kali dibuka
-  |--------------------------------------------------------------------------
-  */
 
   useEffect(() => {
     const clearAutofillTimer = window.setTimeout(() => {
@@ -70,12 +57,6 @@ export default function ProfileMahasiswa() {
       window.clearTimeout(clearAutofillTimer);
     };
   }, []);
-
-  /*
-  |--------------------------------------------------------------------------
-  | Utilitas
-  |--------------------------------------------------------------------------
-  */
 
   function clearNotification() {
     setError('');
@@ -94,11 +75,7 @@ export default function ProfileMahasiswa() {
       return 'Pilih foto profil terlebih dahulu.';
     }
 
-    const allowedTypes = [
-      'image/jpeg',
-      'image/png',
-      'image/webp',
-    ];
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
 
     if (!allowedTypes.includes(file.type)) {
       return 'Foto profil harus berformat JPG, PNG, atau WEBP.';
@@ -111,14 +88,10 @@ export default function ProfileMahasiswa() {
     return '';
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Edit profil
-  |--------------------------------------------------------------------------
-  */
-
   async function updateProfile(event) {
     event.preventDefault();
+
+    if (profileLoading) return;
 
     const name = profileForm.name.trim();
 
@@ -138,33 +111,24 @@ export default function ProfileMahasiswa() {
     }
 
     try {
-      setLoading(true);
+      setProfileLoading(true);
       clearNotification();
 
-      const response = await api.put('/users/me', {
-        name,
-      });
+      const response = await api.put('/users/me', { name });
 
       saveUser(response.user);
-
-      setMessage(
-        response.message || 'Profil berhasil diperbarui.'
-      );
+      setMessage(response.message || 'Profil berhasil diperbarui.');
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
-      setLoading(false);
+      setProfileLoading(false);
     }
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Upload foto
-  |--------------------------------------------------------------------------
-  */
-
   async function uploadPhoto(event) {
     event.preventDefault();
+
+    if (photoLoading) return;
 
     const photoError = validatePhoto(selectedPhoto);
 
@@ -180,25 +144,15 @@ export default function ProfileMahasiswa() {
       setPhotoLoading(true);
       clearNotification();
 
-      const response = await api.post(
-        '/users/me/photo',
-        formData
-      );
+      const response = await api.post('/users/me/photo', formData);
 
       saveUser(response.user);
       setSelectedPhoto(null);
 
-      const photoInput =
-        document.getElementById('profile-photo');
+      const photoInput = document.getElementById('profile-photo');
+      if (photoInput) photoInput.value = '';
 
-      if (photoInput) {
-        photoInput.value = '';
-      }
-
-      setMessage(
-        response.message ||
-          'Foto profil berhasil diunggah.'
-      );
+      setMessage(response.message || 'Foto profil berhasil diunggah.');
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -207,28 +161,21 @@ export default function ProfileMahasiswa() {
   }
 
   async function deletePhoto() {
+    if (photoLoading) return;
+
     try {
       setPhotoLoading(true);
       clearNotification();
 
-      const response = await api.delete(
-        '/users/me/photo'
-      );
+      const response = await api.delete('/users/me/photo');
 
       saveUser(response.user);
       setSelectedPhoto(null);
 
-      const photoInput =
-        document.getElementById('profile-photo');
+      const photoInput = document.getElementById('profile-photo');
+      if (photoInput) photoInput.value = '';
 
-      if (photoInput) {
-        photoInput.value = '';
-      }
-
-      setMessage(
-        response.message ||
-          'Foto profil berhasil dihapus.'
-      );
+      setMessage(response.message || 'Foto profil berhasil dihapus.');
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -236,26 +183,18 @@ export default function ProfileMahasiswa() {
     }
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Kirim OTP
-  |--------------------------------------------------------------------------
-  */
-
   async function sendOtp() {
+    if (otpSending) return;
+
     if (!user?.email) {
       setError('Email akun tidak ditemukan.');
       return;
     }
 
     try {
-      setLoading(true);
+      setOtpSending(true);
       clearNotification();
 
-      /*
-       * Kosongkan kolom sebelum mengirim OTP agar data autofill
-       * browser tidak ikut digunakan.
-       */
       setOtp({
         code: '',
         new_password: '',
@@ -263,12 +202,9 @@ export default function ProfileMahasiswa() {
         sent: false,
       });
 
-      const response = await api.post(
-        '/auth/password/request-otp',
-        {
-          identifier: user.email,
-        }
-      );
+      const response = await api.post('/auth/password/request-otp', {
+        identifier: user.email,
+      });
 
       setOtp({
         code: '',
@@ -278,25 +214,20 @@ export default function ProfileMahasiswa() {
       });
 
       setMessage(
-        response.message ||
-          'Kode OTP sudah dikirim ke email akun.'
+        response.message || 'Kode OTP sudah dikirim ke email akun.'
       );
     } catch (err) {
       setOtp(createEmptyOtp());
       setError(getErrorMessage(err));
     } finally {
-      setLoading(false);
+      setOtpSending(false);
     }
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Ubah password dengan OTP
-  |--------------------------------------------------------------------------
-  */
-
   async function changeByOtp(event) {
     event.preventDefault();
+
+    if (passwordLoading) return;
 
     const cleanCode = otp.code.replace(/\D/g, '');
 
@@ -326,46 +257,33 @@ export default function ProfileMahasiswa() {
     }
 
     if (otp.new_password !== otp.confirm) {
-      setError(
-        'Konfirmasi password baru belum sama.'
-      );
+      setError('Konfirmasi password baru belum sama.');
       return;
     }
 
     try {
-      setLoading(true);
+      setPasswordLoading(true);
       clearNotification();
 
-      const response = await api.post(
-        '/auth/password/reset',
-        {
-          identifier: user?.email,
-          code: cleanCode,
-          new_password: otp.new_password,
-        }
-      );
+      const response = await api.post('/auth/password/reset', {
+        identifier: user?.email,
+        code: cleanCode,
+        new_password: otp.new_password,
+      });
 
       setOtp(createEmptyOtp());
-
-      setMessage(
-        response.message ||
-          'Password berhasil diubah.'
-      );
+      setMessage(response.message || 'Password berhasil diubah.');
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
-      setLoading(false);
+      setPasswordLoading(false);
     }
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | Ubah password dengan password lama
-  |--------------------------------------------------------------------------
-  */
-
   async function changeManual(event) {
     event.preventDefault();
+
+    if (passwordLoading) return;
 
     if (!manual.current_password) {
       setError('Password lama wajib diisi.');
@@ -387,74 +305,49 @@ export default function ProfileMahasiswa() {
       return;
     }
 
-    if (
-      manual.new_password !== manual.confirm
-    ) {
-      setError(
-        'Konfirmasi password baru belum sama.'
-      );
+    if (manual.new_password !== manual.confirm) {
+      setError('Konfirmasi password baru belum sama.');
       return;
     }
 
-    if (
-      manual.current_password ===
-      manual.new_password
-    ) {
-      setError(
-        'Password baru tidak boleh sama dengan password lama.'
-      );
+    if (manual.current_password === manual.new_password) {
+      setError('Password baru tidak boleh sama dengan password lama.');
       return;
     }
 
     try {
-      setLoading(true);
+      setPasswordLoading(true);
       clearNotification();
 
-      const response = await api.post(
-        '/auth/change-password',
-        {
-          current_password:
-            manual.current_password,
-          new_password: manual.new_password,
-        }
-      );
+      const response = await api.post('/auth/change-password', {
+        current_password: manual.current_password,
+        new_password: manual.new_password,
+      });
 
       setManual(createEmptyManual());
-
-      setMessage(
-        response.message ||
-          'Password berhasil diubah.'
-      );
+      setMessage(response.message || 'Password berhasil diubah.');
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
-      setLoading(false);
+      setPasswordLoading(false);
     }
   }
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 pb-16 lg:pb-0">
-      {/* ================= PROFIL UTAMA ================= */}
-
       <section className="card relative overflow-hidden rounded-3xl p-6">
         <div className="pointer-events-none absolute -right-14 -top-14 h-44 w-44 rounded-full bg-primary/5" />
 
         <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center">
-          <Avatar
-            user={user}
-            size="lg"
-            className="shrink-0"
-          />
+          <Avatar user={user} size="lg" className="shrink-0" />
 
           <div className="min-w-0">
             <h2 className="truncate text-2xl font-extrabold">
               {user?.name || 'Mahasiswa SI'}
             </h2>
-
             <p className="text-sm text-gray-500">
               Mahasiswa Program Studi Sistem Informasi
             </p>
-
             <p className="mt-1 break-all text-xs text-gray-400">
               {user?.email || '-'}
             </p>
@@ -467,47 +360,24 @@ export default function ProfileMahasiswa() {
             <span className="material-symbols-rounded text-[18px]">
               upload_file
             </span>
-
             Upload Tugas Akhir
           </Link>
         </div>
 
         <div className="mt-6 grid gap-4 sm:grid-cols-3">
-          <Info
-            label="Email"
-            value={user?.email || '-'}
-          />
-
-          <Info
-            label="NIM"
-            value={user?.nim || '-'}
-          />
-
-          <Info
-            label="Prodi"
-            value="Sistem Informasi"
-          />
+          <Info label="Email" value={user?.email || '-'} />
+          <Info label="NIM" value={user?.nim || '-'} />
+          <Info label="Prodi" value="Sistem Informasi" />
         </div>
       </section>
 
-      {/* ================= NOTIFIKASI ================= */}
-
       {error && (
-        <Toast
-          type="error"
-          message={error}
-          onClose={() => setError('')}
-        />
+        <Toast type="error" message={error} onClose={() => setError('')} />
       )}
 
       {message && (
-        <Toast
-          message={message}
-          onClose={() => setMessage('')}
-        />
+        <Toast message={message} onClose={() => setMessage('')} />
       )}
-
-      {/* ================= FOTO DAN EDIT PROFIL ================= */}
 
       <section className="card rounded-3xl p-5">
         <div className="grid gap-6 lg:grid-cols-[260px,1fr]">
@@ -517,19 +387,12 @@ export default function ProfileMahasiswa() {
             encType="multipart/form-data"
           >
             <div className="flex flex-col items-center gap-3 text-center">
-              <Avatar
-                user={user}
-                size="xl"
-              />
-
+              <Avatar user={user} size="xl" />
               <div>
-                <h3 className="font-extrabold">
-                  Foto Profil
-                </h3>
-
+                <h3 className="font-extrabold">Foto Profil</h3>
                 <p className="mt-1 text-xs text-gray-500">
-                  Upload foto profil dengan format JPG,
-                  PNG, atau WEBP maksimal 2 MB.
+                  Upload foto profil dengan format JPG, PNG, atau WEBP maksimal
+                  2 MB.
                 </p>
               </div>
             </div>
@@ -541,10 +404,7 @@ export default function ProfileMahasiswa() {
               accept="image/jpeg,image/png,image/webp"
               className="input file:mr-4 file:rounded-xl file:border-0 file:bg-primary file:px-4 file:py-2 file:text-white"
               onChange={(event) => {
-                setSelectedPhoto(
-                  event.target.files?.[0] || null
-                );
-
+                setSelectedPhoto(event.target.files?.[0] || null);
                 clearNotification();
               }}
             />
@@ -558,26 +418,17 @@ export default function ProfileMahasiswa() {
             <div className="flex flex-col gap-2">
               <button
                 type="submit"
-                disabled={
-                  photoLoading || !selectedPhoto
-                }
+                disabled={photoLoading || !selectedPhoto}
                 className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <span
                   className={`material-symbols-rounded text-[18px] ${
-                    photoLoading
-                      ? 'animate-spin'
-                      : ''
+                    photoLoading ? 'animate-spin' : ''
                   }`}
                 >
-                  {photoLoading
-                    ? 'refresh'
-                    : 'cloud_upload'}
+                  {photoLoading ? 'refresh' : 'cloud_upload'}
                 </span>
-
-                {photoLoading
-                  ? 'Mengupload...'
-                  : 'Upload Foto'}
+                {photoLoading ? 'Mengupload...' : 'Upload Foto'}
               </button>
 
               {user?.profile_photo_url && (
@@ -590,7 +441,6 @@ export default function ProfileMahasiswa() {
                   <span className="material-symbols-rounded text-[18px]">
                     delete
                   </span>
-
                   Hapus Foto
                 </button>
               )}
@@ -603,25 +453,18 @@ export default function ProfileMahasiswa() {
             autoComplete="off"
           >
             <div>
-              <h3 className="text-lg font-extrabold">
-                Edit Profil
-              </h3>
-
+              <h3 className="text-lg font-extrabold">Edit Profil</h3>
               <p className="mt-1 text-sm text-gray-500">
-                Email dan NIM dikunci agar data upload
-                tetap sesuai akun mahasiswa.
+                Email dan NIM dikunci agar data upload tetap sesuai akun
+                mahasiswa.
               </p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <label
-                  htmlFor="profile-name"
-                  className="label"
-                >
+                <label htmlFor="profile-name" className="label">
                   Nama Lengkap
                 </label>
-
                 <input
                   id="profile-name"
                   name="profile_name"
@@ -639,13 +482,9 @@ export default function ProfileMahasiswa() {
               </div>
 
               <div>
-                <label
-                  htmlFor="profile-study-program"
-                  className="label"
-                >
+                <label htmlFor="profile-study-program" className="label">
                   Prodi
                 </label>
-
                 <input
                   id="profile-study-program"
                   name="profile_study_program"
@@ -658,13 +497,9 @@ export default function ProfileMahasiswa() {
               </div>
 
               <div>
-                <label
-                  htmlFor="profile-email"
-                  className="label"
-                >
+                <label htmlFor="profile-email" className="label">
                   Email
                 </label>
-
                 <input
                   id="profile-email"
                   name="profile_email"
@@ -677,13 +512,9 @@ export default function ProfileMahasiswa() {
               </div>
 
               <div>
-                <label
-                  htmlFor="profile-nim"
-                  className="label"
-                >
+                <label htmlFor="profile-nim" className="label">
                   NIM
                 </label>
-
                 <input
                   id="profile-nim"
                   name="profile_nim"
@@ -698,42 +529,35 @@ export default function ProfileMahasiswa() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={profileLoading}
               className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <span className="material-symbols-rounded text-[18px]">
-                save
+              <span
+                className={`material-symbols-rounded text-[18px] ${
+                  profileLoading ? 'animate-spin' : ''
+                }`}
+              >
+                {profileLoading ? 'refresh' : 'save'}
               </span>
-
-              {loading
-                ? 'Menyimpan...'
-                : 'Simpan Profil'}
+              {profileLoading ? 'Menyimpan...' : 'Simpan Profil'}
             </button>
           </form>
         </div>
       </section>
 
-      {/* ================= UBAH PASSWORD ================= */}
-
       <section className="card rounded-3xl p-5">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="text-lg font-extrabold">
-              Ubah Password
-            </h3>
-
+            <h3 className="text-lg font-extrabold">Ubah Password</h3>
             <p className="mt-1 text-sm text-gray-500">
-              Ganti sandi melalui OTP email atau
-              password lama.
+              Ganti sandi melalui OTP email atau password lama.
             </p>
           </div>
 
           <div className="flex rounded-2xl bg-gray-100 p-1 text-sm font-bold">
             <button
               type="button"
-              onClick={() =>
-                resetPasswordForms('otp')
-              }
+              onClick={() => resetPasswordForms('otp')}
               className={`rounded-xl px-3 py-2 ${
                 mode === 'otp'
                   ? 'bg-white text-primary shadow-card'
@@ -745,9 +569,7 @@ export default function ProfileMahasiswa() {
 
             <button
               type="button"
-              onClick={() =>
-                resetPasswordForms('manual')
-              }
+              onClick={() => resetPasswordForms('manual')}
               className={`rounded-xl px-3 py-2 ${
                 mode === 'manual'
                   ? 'bg-white text-primary shadow-card'
@@ -765,10 +587,6 @@ export default function ProfileMahasiswa() {
             className="space-y-4"
             autoComplete="off"
           >
-            {/*
-              Membantu browser mengenali identitas akun
-              tanpa menganggap kolom OTP sebagai username.
-            */}
             <input
               type="text"
               name="repota_otp_account_identifier"
@@ -782,10 +600,7 @@ export default function ProfileMahasiswa() {
 
             <div className="flex flex-col gap-3 rounded-2xl border border-outline/40 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="font-bold">
-                  Kirim OTP ke email akun
-                </p>
-
+                <p className="font-bold">Kirim OTP ke email akun</p>
                 <p className="break-all text-sm text-gray-500">
                   {user?.email || '-'}
                 </p>
@@ -794,20 +609,17 @@ export default function ProfileMahasiswa() {
               <button
                 type="button"
                 onClick={sendOtp}
-                disabled={loading}
+                disabled={otpSending}
                 className="btn-secondary justify-center disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <span
                   className={`material-symbols-rounded text-[18px] ${
-                    loading
-                      ? 'animate-spin'
-                      : ''
+                    otpSending ? 'animate-spin' : ''
                   }`}
                 >
-                  {loading ? 'refresh' : 'mail'}
+                  {otpSending ? 'refresh' : 'mail'}
                 </span>
-
-                {loading
+                {otpSending
                   ? 'Mengirim...'
                   : otp.sent
                     ? 'Kirim Ulang OTP'
@@ -817,8 +629,8 @@ export default function ProfileMahasiswa() {
 
             {otp.sent && (
               <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-                Kode OTP sudah dikirim ke email akun.
-                Cek inbox atau folder spam.
+                Kode OTP sudah dikirim ke email akun. Cek inbox atau folder
+                spam.
               </div>
             )}
 
@@ -833,10 +645,7 @@ export default function ProfileMahasiswa() {
                 pattern="[0-9]{6}"
                 value={otp.code}
                 onChange={(value) => {
-                  const numericValue = value
-                    .replace(/\D/g, '')
-                    .slice(0, 6);
-
+                  const numericValue = value.replace(/\D/g, '').slice(0, 6);
                   setOtp((current) => ({
                     ...current,
                     code: numericValue,
@@ -884,14 +693,17 @@ export default function ProfileMahasiswa() {
 
             <button
               type="submit"
-              disabled={loading || !otp.sent}
+              disabled={passwordLoading || !otp.sent}
               className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <span className="material-symbols-rounded text-[18px]">
-                lock_reset
+              <span
+                className={`material-symbols-rounded text-[18px] ${
+                  passwordLoading ? 'animate-spin' : ''
+                }`}
+              >
+                {passwordLoading ? 'refresh' : 'lock_reset'}
               </span>
-
-              {loading
+              {passwordLoading
                 ? 'Memproses...'
                 : 'Ubah Password dengan OTP'}
             </button>
@@ -967,16 +779,17 @@ export default function ProfileMahasiswa() {
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={passwordLoading}
               className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <span className="material-symbols-rounded text-[18px]">
-                lock
+              <span
+                className={`material-symbols-rounded text-[18px] ${
+                  passwordLoading ? 'animate-spin' : ''
+                }`}
+              >
+                {passwordLoading ? 'refresh' : 'lock'}
               </span>
-
-              {loading
-                ? 'Menyimpan...'
-                : 'Simpan Password Baru'}
+              {passwordLoading ? 'Menyimpan...' : 'Simpan Password Baru'}
             </button>
           </form>
         )}
@@ -988,13 +801,8 @@ export default function ProfileMahasiswa() {
 function Info({ label, value }) {
   return (
     <div className="min-w-0 rounded-2xl border border-outline/40 bg-gray-50 p-4">
-      <p className="text-xs text-gray-500">
-        {label}
-      </p>
-
-      <p className="mt-1 break-words font-bold">
-        {value}
-      </p>
+      <p className="text-xs text-gray-500">{label}</p>
+      <p className="mt-1 break-words font-bold">{value}</p>
     </div>
   );
 }
@@ -1016,14 +824,8 @@ function Field({
 }) {
   return (
     <div>
-      <label
-        htmlFor={id}
-        className="label"
-      >
-        {label}{' '}
-        <span className="text-red-500">
-          *
-        </span>
+      <label htmlFor={id} className="label">
+        {label} <span className="text-red-500">*</span>
       </label>
 
       <input
@@ -1032,9 +834,7 @@ function Field({
         type={type}
         className={`input ${className}`}
         value={value}
-        onChange={(event) =>
-          onChange(event.target.value)
-        }
+        onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         maxLength={maxLength}
         minLength={minLength}

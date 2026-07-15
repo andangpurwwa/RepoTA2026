@@ -1,87 +1,214 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { api } from './api';
+
+const TOKEN_KEY = 'repota_token';
+const USER_KEY = 'repota_user';
 
 const AuthContext = createContext(null);
 
-function getSavedUser() {
+function readStoredUser() {
   try {
-    const saved = sessionStorage.getItem('repota_user');
-    return saved ? JSON.parse(saved) : null;
+    const raw = sessionStorage.getItem(USER_KEY);
+    return raw ? JSON.parse(raw) : null;
   } catch {
-    sessionStorage.removeItem('repota_user');
-    sessionStorage.removeItem('repota_token');
+    sessionStorage.removeItem(USER_KEY);
     return null;
   }
 }
 
+function storeUser(user) {
+  if (!user) {
+    sessionStorage.removeItem(USER_KEY);
+    return;
+  }
+
+  sessionStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+
+function storeToken(token) {
+  if (!token) {
+    sessionStorage.removeItem(TOKEN_KEY);
+    return;
+  }
+
+  sessionStorage.setItem(TOKEN_KEY, token);
+}
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => getSavedUser());
-  const [loading, setLoading] = useState(() => Boolean(sessionStorage.getItem('repota_token')));
+  const [user, setUser] = useState(readStoredUser);
+  const [authReady, setAuthReady] = useState(false);
 
-  function saveUser(nextUser) {
-    setUser(nextUser);
-    if (nextUser) sessionStorage.setItem('repota_user', JSON.stringify(nextUser));
-    else sessionStorage.removeItem('repota_user');
-  }
+  const clearSession = useCallback(() => {
+    storeToken(null);
+    storeUser(null);
+    setUser(null);
+  }, []);
 
-  async function refreshMe() {
-    const res = await api.get('/auth/me');
-    saveUser(res.user);
-    return res.user;
-  }
+  const saveUser = useCallback((nextUser) => {
+    setUser((currentUser) => {
+      const mergedUser = currentUser
+        ? { ...currentUser, ...nextUser }
+        : nextUser;
+
+      storeUser(mergedUser);
+      return mergedUser;
+    });
+  }, []);
+
+  const saveSession = useCallback((session) => {
+    if (!session?.token || !session?.user) {
+      throw new Error('Data sesi login dari server tidak lengkap.');
+    }
+
+    storeToken(session.token);
+    storeUser(session.user);
+    setUser(session.user);
+
+    return session.user;
+  }, []);
+
+  const login = useCallback(
+    async (identifier, password) => {
+      const response = await api.post(
+        '/auth/login',
+        {
+          identifier,
+          password,
+        },
+        {
+          skipAuth: true,
+        }
+      );
+
+      return saveSession(response);
+    },
+    [saveSession]
+  );
+
+  const register = useCallback(
+    async (payload) => {
+      const response = await api.post(
+        '/auth/register',
+        payload,
+        {
+          skipAuth: true,
+        }
+      );
+
+      return saveSession(response);
+    },
+    [saveSession]
+  );
+
+  const refreshUser = useCallback(async () => {
+    const token = sessionStorage.getItem(TOKEN_KEY);
+
+    if (!token) {
+      clearSession();
+      return null;
+    }
+
+    const response = await api.get('/auth/me');
+    saveUser(response.user);
+
+    return response.user;
+  }, [clearSession, saveUser]);
+
+  const logout = useCallback(() => {
+    clearSession();
+  }, [clearSession]);
 
   useEffect(() => {
     let active = true;
-    async function loadMe() {
-      const token = sessionStorage.getItem('repota_token');
+
+    async function initializeAuth() {
+      const token = sessionStorage.getItem(TOKEN_KEY);
+
       if (!token) {
-        setLoading(false);
+        if (active) setAuthReady(true);
         return;
       }
+
       try {
-        const res = await api.get('/auth/me');
-        if (active) saveUser(res.user);
+        await refreshUser();
       } catch {
-        sessionStorage.removeItem('repota_token');
-        sessionStorage.removeItem('repota_user');
-        if (active) setUser(null);
+        clearSession();
       } finally {
-        if (active) setLoading(false);
+        if (active) setAuthReady(true);
       }
     }
-    loadMe();
-    return () => { active = false; };
-  }, []);
 
-  async function login(identifier, password, expectedRole) {
-    const res = await api.post('/auth/login', { identifier, password });
+    initializeAuth();
 
-    if (expectedRole && res.user?.role !== expectedRole) {
-      const portalLabel = expectedRole === 'admin' ? 'Admin' : 'Mahasiswa';
-      throw new Error(`Akun ini tidak memiliki akses ke portal ${portalLabel}.`);
+    return () => {
+      active = false;
+    };
+  }, [clearSession, refreshUser]);
+
+  useEffect(() => {
+    function handleUnauthorized() {
+      clearSession();
     }
 
-    sessionStorage.setItem('repota_token', res.token);
-    saveUser(res.user);
-    return res.user;
-  }
+    window.addEventListener(
+      'repota:unauthorized',
+      handleUnauthorized
+    );
 
-  function logout() {
-    sessionStorage.removeItem('repota_token');
-    sessionStorage.removeItem('repota_user');
-    setUser(null);
-  }
+    return () => {
+      window.removeEventListener(
+        'repota:unauthorized',
+        handleUnauthorized
+      );
+    };
+  }, [clearSession]);
 
   const value = useMemo(
-    () => ({ user, loading, login, logout, refreshMe, saveUser, isAuthenticated: Boolean(user) }),
-    [user, loading]
+    () => ({
+      user,
+      authReady,
+      isAuthenticated: Boolean(user),
+      login,
+      register,
+      logout,
+      saveUser,
+      saveSession,
+      refreshUser,
+    }),
+    [
+      user,
+      authReady,
+      login,
+      register,
+      logout,
+      saveUser,
+      saveSession,
+      refreshUser,
+    ]
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth harus digunakan di dalam AuthProvider');
-  return ctx;
+  const context = useContext(AuthContext);
+
+  if (!context) {
+    throw new Error(
+      'useAuth harus digunakan di dalam komponen AuthProvider.'
+    );
+  }
+
+  return context;
 }
