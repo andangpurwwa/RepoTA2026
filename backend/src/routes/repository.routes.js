@@ -6,21 +6,48 @@ const uploadPdf = require('../middleware/upload');
 const jwt = require('jsonwebtoken');
 const { optionalAuth, requireAuth } = require('../middleware/auth');
 const { categorizeRepository } = require('../utils/categorize');
-const {
-  cleanString,
-  isValidDate,
-  isValidPhone,
-  ensureValidation,
-} = require('../utils/validation');
+const { cleanString, ensureValidation } = require('../utils/validation');
 
 const router = express.Router();
 
-const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'repota-documents';
-const VALID_STATUSES = ['draft', 'pending', 'approved', 'rejected', 'revision'];
+const STORAGE_BUCKET =
+  supabase.config?.documentBucket ||
+  process.env.SUPABASE_STORAGE_BUCKET ||
+  'RepoTA-document';
 const jwtSecret = process.env.JWT_SECRET;
 
 if (!jwtSecret) {
   throw new Error('JWT_SECRET wajib diisi di backend/.env atau environment deployment.');
+}
+
+function toPositiveInt(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function insertVerificationLog(client, {
+  repositoryId,
+  actorId = null,
+  action,
+  oldStatus = null,
+  newStatus = null,
+  note = null,
+  metadata = {},
+}) {
+  await client.query(
+    `INSERT INTO repository_verification_logs
+     (repository_id, actor_id, action, old_status, new_status, note, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+    [
+      repositoryId,
+      actorId,
+      action,
+      oldStatus,
+      newStatus,
+      note,
+      JSON.stringify(metadata || {}),
+    ]
+  );
 }
 
 function sanitizeFileName(originalName = 'document.pdf') {
@@ -325,7 +352,7 @@ router.get('/download/:fileName', async (req, res) => {
       return res.status(401).json({ message: 'Silakan login untuk membuka dokumen.' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');
+    const decoded = jwt.verify(token, jwtSecret);
 
     const userResult = await pool.query(
       'SELECT id, role FROM users WHERE id = $1',
@@ -381,6 +408,38 @@ router.get('/download/:fileName', async (req, res) => {
     return res.redirect(signedUrl);
   } catch (error) {
     return res.status(401).json({ message: 'Sesi tidak valid. Silakan login ulang.' });
+  }
+});
+
+router.get('/:id/audit-logs', requireAuth(['admin']), async (req, res, next) => {
+  try {
+    const repositoryId = toPositiveInt(req.params.id);
+
+    if (!repositoryId) {
+      return res.status(400).json({ message: 'ID repository tidak valid.' });
+    }
+
+    const result = await pool.query(
+      `SELECT
+         l.id,
+         l.action,
+         l.old_status,
+         l.new_status,
+         l.note,
+         l.metadata,
+         l.created_at,
+         u.name AS actor_name,
+         u.role AS actor_role
+       FROM repository_verification_logs l
+       LEFT JOIN users u ON u.id = l.actor_id
+       WHERE l.repository_id = $1
+       ORDER BY l.created_at DESC`,
+      [repositoryId]
+    );
+
+    return res.json({ data: result.rows });
+  } catch (error) {
+    return next(error);
   }
 });
 
@@ -644,7 +703,7 @@ router.put('/:id/resubmit', requireAuth(['mahasiswa']), uploadPdf.single('docume
 
     await insertVerificationLog(client, {
       repositoryId,
-      adminId: null,
+      actorId: req.user.id,
       action: 'student_resubmit',
       oldStatus: before.status,
       newStatus: 'pending',
@@ -758,37 +817,68 @@ router.put('/:id', requireAuth(['admin']), async (req, res, next) => {
 });
 
 router.patch('/:id/verify', requireAuth(['admin']), async (req, res, next) => {
+  const client = await pool.connect();
+
   try {
-    const { status, rejection_note } = req.body;
+    const repositoryId = toPositiveInt(req.params.id);
+    const status = cleanString(req.body?.status);
+    const rejectionNote = cleanString(req.body?.rejection_note) || null;
+
+    if (!repositoryId) {
+      return res.status(400).json({ message: 'ID repository tidak valid.' });
+    }
 
     if (!['approved', 'rejected', 'revision'].includes(status)) {
       return res.status(400).json({ message: 'Status verifikasi tidak valid.' });
     }
 
-    const isApproved = status === 'approved';
+    if (['rejected', 'revision'].includes(status) && !rejectionNote) {
+      return res.status(400).json({
+        message: 'Catatan wajib diisi untuk status Ditolak atau Revisi.',
+      });
+    }
 
-    const result = await pool.query(
+    await client.query('BEGIN');
+
+    const beforeResult = await client.query(
+      `SELECT id, status
+       FROM repositories
+       WHERE id = $1
+       FOR UPDATE`,
+      [repositoryId]
+    );
+
+    const before = beforeResult.rows[0];
+
+    if (!before) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Repository tidak ditemukan.' });
+    }
+
+    const isApproved = status === 'approved';
+    const result = await client.query(
       `UPDATE repositories
-       SET 
+       SET
          status = $1,
          rejection_note = $2,
-         approved_by = CASE WHEN $5 THEN $3 ELSE approved_by END,
-         approved_at = CASE WHEN $5 THEN CURRENT_TIMESTAMP ELSE approved_at END,
+         approved_by = CASE WHEN $5 THEN $3 ELSE NULL END,
+         approved_at = CASE WHEN $5 THEN CURRENT_TIMESTAMP ELSE NULL END,
          updated_at = CURRENT_TIMESTAMP
        WHERE id = $4
        RETURNING *`,
-      [
-        status,
-        rejection_note || null,
-        req.user.id,
-        req.params.id,
-        isApproved,
-      ]
+      [status, rejectionNote, req.user.id, repositoryId, isApproved]
     );
 
-    if (!result.rows[0]) {
-      return res.status(404).json({ message: 'Repository tidak ditemukan.' });
-    }
+    await insertVerificationLog(client, {
+      repositoryId,
+      actorId: req.user.id,
+      action: `admin_${status}`,
+      oldStatus: before.status,
+      newStatus: status,
+      note: rejectionNote,
+    });
+
+    await client.query('COMMIT');
 
     return res.json({
       message: 'Status repository berhasil diperbarui.',
@@ -798,7 +888,14 @@ router.patch('/:id/verify', requireAuth(['admin']), async (req, res, next) => {
       },
     });
   } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // Tidak ada transaksi aktif.
+    }
     return next(error);
+  } finally {
+    client.release();
   }
 });
 

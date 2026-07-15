@@ -3,10 +3,10 @@ import { Link, Outlet } from 'react-router-dom';
 export default function GuestLayout() {
   return (
     <div className="min-h-screen bg-surface">
-      {/* ================= HEADER ================= */}
+      {/* Header */}
       <header className="sticky top-0 z-30 border-b border-outline/40 bg-white/95 shadow-sm backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6">
-          {/* Logo RepoTA */}
+          {/* Identitas RepoTA */}
           <Link
             to="/guest"
             className="flex items-center gap-2.5"
@@ -34,6 +34,7 @@ export default function GuestLayout() {
             <a
               href="mailto:si@uad.ac.id"
               className="hidden items-center gap-2 text-sm font-semibold text-gray-600 transition-colors hover:text-primary md:inline-flex"
+              aria-label="Kirim email ke Program Studi Sistem Informasi"
             >
               <span className="material-symbols-rounded text-[17px]">
                 mail
@@ -56,36 +57,42 @@ export default function GuestLayout() {
         </div>
       </header>
 
-      {/* ================= ISI HALAMAN ================= */}
+      {/* Isi halaman */}
       <main>
         <Outlet />
       </main>
 
-      {/* ================= FOOTER ================= */}
+      {/* Footer */}
       <footer
         id="kontak"
         className="scroll-mt-20 border-t border-outline/40 bg-white"
       >
         <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
           <div className="grid gap-8 rounded-3xl border border-outline/40 bg-gradient-to-br from-primary-50 to-white p-6 text-sm text-gray-600 sm:p-8 md:grid-cols-[1.25fr_0.75fr] md:items-center lg:gap-12">
-            {/* Logo dan informasi UAD */}
-            <div className="flex flex-col items-start">
-              <img
-                src="/uad-akreditasi-unggul.png"
-                alt="Logo Universitas Ahmad Dahlan Akreditasi Unggul"
-                className="h-auto w-[180px] object-contain sm:w-[150px] md:w-[150px]"
-              />
+            {/* Informasi RepoTA */}
+            <div>
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary shadow-card">
+                  <span className="material-symbols-rounded icon-filled text-[25px] text-white">
+                    auto_stories
+                  </span>
+                </div>
 
-              <div className="mt-5">
-                <p className="text-xl font-extrabold text-primary">
-                  RepoTA
-                </p>
+                <div>
+                  <p className="text-2xl font-extrabold leading-none text-primary">
+                    RepoTA
+                  </p>
 
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-gray-600 sm:text-base">
-                  Portal repository dan analisis Tugas Akhir Program Studi
-                  Sistem Informasi Universitas Ahmad Dahlan.
-                </p>
+                  <p className="mt-1 text-xs font-medium text-gray-500">
+                    Repository Tugas Akhir Sistem Informasi
+                  </p>
+                </div>
               </div>
+
+              <p className="mt-5 max-w-2xl text-sm leading-6 text-gray-600 sm:text-base">
+                Portal pencarian, pengelolaan, dan analisis Tugas Akhir Program
+                Studi Sistem Informasi Universitas Ahmad Dahlan.
+              </p>
             </div>
 
             {/* Kontak Prodi */}

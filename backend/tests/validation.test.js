@@ -1,3 +1,5 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
 const {
   cleanString,
   countWords,
@@ -6,31 +8,32 @@ const {
   ensureValidation,
 } = require('../src/utils/validation');
 
-describe('validation utils', () => {
-  test('cleanString membersihkan spasi awal dan akhir', () => {
-    expect(cleanString('  RepoTA  ')).toBe('RepoTA');
-  });
+test('cleanString membersihkan spasi awal dan akhir', () => {
+  assert.equal(cleanString('  RepoTA  '), 'RepoTA');
+});
 
-  test('countWords menghitung kata dan mengabaikan spasi berlebih', () => {
-    expect(countWords('  dashboard   repository tugas akhir  ')).toBe(4);
-    expect(countWords('')).toBe(0);
-  });
+test('countWords menghitung kata dan mengabaikan spasi berlebih', () => {
+  assert.equal(countWords('  dashboard   repository tugas akhir  '), 4);
+  assert.equal(countWords(''), 0);
+});
 
-  test('nomor telepon valid untuk 08 dan +62', () => {
-    expect(isValidPhone('081234567890')).toBe(true);
-    expect(isValidPhone('+6281234567890')).toBe(true);
-  });
+test('nomor telepon valid untuk 08 dan +62', () => {
+  assert.equal(isValidPhone('081234567890'), true);
+  assert.equal(isValidPhone('+6281234567890'), true);
+});
 
-  test('nomor telepon invalid jika terlalu pendek', () => {
-    expect(isValidPhone('12345')).toBe(false);
-  });
+test('nomor telepon invalid jika terlalu pendek', () => {
+  assert.equal(isValidPhone('12345'), false);
+});
 
-  test('password minimal 8 karakter', () => {
-    expect(validatePassword('1234567')).toContain('Password minimal 8 karakter.');
-    expect(validatePassword('12345678')).toHaveLength(0);
-  });
+test('password minimal 8 karakter', () => {
+  assert.ok(validatePassword('1234567').includes('Password minimal 8 karakter.'));
+  assert.equal(validatePassword('12345678').length, 0);
+});
 
-  test('ensureValidation melempar error 400', () => {
-    expect(() => ensureValidation(['Nama wajib diisi.'])).toThrow('Nama wajib diisi.');
-  });
+test('ensureValidation melempar error status 400', () => {
+  assert.throws(
+    () => ensureValidation(['Nama wajib diisi.']),
+    (error) => error.status === 400 && error.message === 'Nama wajib diisi.'
+  );
 });

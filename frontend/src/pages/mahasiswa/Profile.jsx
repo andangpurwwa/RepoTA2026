@@ -6,31 +6,47 @@ import Avatar from '../../components/ui/Avatar';
 import Toast from '../../components/ui/Toast';
 import { getErrorMessage } from '../../utils/helpers';
 
-const emptyOtp = {
-  code: '',
-  new_password: '',
-  confirm: '',
-  sent: false,
-};
+function createEmptyOtp() {
+  return {
+    code: '',
+    new_password: '',
+    confirm: '',
+    sent: false,
+  };
+}
 
-const emptyManual = {
-  current_password: '',
-  new_password: '',
-  confirm: '',
-};
+function createEmptyManual() {
+  return {
+    current_password: '',
+    new_password: '',
+    confirm: '',
+  };
+}
 
 export default function ProfileMahasiswa() {
   const { user, saveUser } = useAuth();
 
   const [mode, setMode] = useState('otp');
-  const [profileForm, setProfileForm] = useState({ name: '' });
+
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+  });
+
   const [selectedPhoto, setSelectedPhoto] = useState(null);
-  const [otp, setOtp] = useState(emptyOtp);
-  const [manual, setManual] = useState(emptyManual);
+  const [otp, setOtp] = useState(createEmptyOtp);
+  const [manual, setManual] = useState(createEmptyManual);
+
   const [loading, setLoading] = useState(false);
   const [photoLoading, setPhotoLoading] = useState(false);
+
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+
+  /*
+  |--------------------------------------------------------------------------
+  | Memuat data profil
+  |--------------------------------------------------------------------------
+  */
 
   useEffect(() => {
     setProfileForm({
@@ -38,11 +54,54 @@ export default function ProfileMahasiswa() {
     });
   }, [user]);
 
-  function validatePhoto(file) {
-    if (!file) return 'Pilih foto profil terlebih dahulu.';
+  /*
+  |--------------------------------------------------------------------------
+  | Membersihkan autofill browser saat halaman pertama kali dibuka
+  |--------------------------------------------------------------------------
+  */
 
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      return 'Foto profil harus JPG, PNG, atau WEBP.';
+  useEffect(() => {
+    const clearAutofillTimer = window.setTimeout(() => {
+      setOtp(createEmptyOtp());
+      setManual(createEmptyManual());
+    }, 150);
+
+    return () => {
+      window.clearTimeout(clearAutofillTimer);
+    };
+  }, []);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Utilitas
+  |--------------------------------------------------------------------------
+  */
+
+  function clearNotification() {
+    setError('');
+    setMessage('');
+  }
+
+  function resetPasswordForms(nextMode = mode) {
+    setOtp(createEmptyOtp());
+    setManual(createEmptyManual());
+    setMode(nextMode);
+    clearNotification();
+  }
+
+  function validatePhoto(file) {
+    if (!file) {
+      return 'Pilih foto profil terlebih dahulu.';
+    }
+
+    const allowedTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      return 'Foto profil harus berformat JPG, PNG, atau WEBP.';
     }
 
     if (file.size > 2 * 1024 * 1024) {
@@ -52,31 +111,45 @@ export default function ProfileMahasiswa() {
     return '';
   }
 
-  async function updateProfile(e) {
-    e.preventDefault();
+  /*
+  |--------------------------------------------------------------------------
+  | Edit profil
+  |--------------------------------------------------------------------------
+  */
 
-    if (!profileForm.name.trim()) {
+  async function updateProfile(event) {
+    event.preventDefault();
+
+    const name = profileForm.name.trim();
+
+    if (!name) {
       setError('Nama wajib diisi.');
       return;
     }
 
-    if (profileForm.name.trim().length < 3) {
+    if (name.length < 3) {
       setError('Nama minimal 3 karakter.');
+      return;
+    }
+
+    if (name.length > 120) {
+      setError('Nama maksimal 120 karakter.');
       return;
     }
 
     try {
       setLoading(true);
-      setError('');
-      setMessage('');
+      clearNotification();
 
-      const res = await api.put('/users/me', {
-        name: profileForm.name.trim(),
-        phone: '',
+      const response = await api.put('/users/me', {
+        name,
       });
 
-      saveUser(res.user);
-      setMessage(res.message || 'Profil berhasil diperbarui.');
+      saveUser(response.user);
+
+      setMessage(
+        response.message || 'Profil berhasil diperbarui.'
+      );
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -84,8 +157,14 @@ export default function ProfileMahasiswa() {
     }
   }
 
-  async function uploadPhoto(e) {
-    e.preventDefault();
+  /*
+  |--------------------------------------------------------------------------
+  | Upload foto
+  |--------------------------------------------------------------------------
+  */
+
+  async function uploadPhoto(event) {
+    event.preventDefault();
 
     const photoError = validatePhoto(selectedPhoto);
 
@@ -99,21 +178,27 @@ export default function ProfileMahasiswa() {
 
     try {
       setPhotoLoading(true);
-      setError('');
-      setMessage('');
+      clearNotification();
 
-      const res = await api.post('/users/me/photo', formData);
+      const response = await api.post(
+        '/users/me/photo',
+        formData
+      );
 
-      saveUser(res.user);
+      saveUser(response.user);
       setSelectedPhoto(null);
 
-      const input = document.getElementById('profile-photo');
+      const photoInput =
+        document.getElementById('profile-photo');
 
-      if (input) {
-        input.value = '';
+      if (photoInput) {
+        photoInput.value = '';
       }
 
-      setMessage(res.message || 'Foto profil berhasil diunggah.');
+      setMessage(
+        response.message ||
+          'Foto profil berhasil diunggah.'
+      );
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -124,14 +209,26 @@ export default function ProfileMahasiswa() {
   async function deletePhoto() {
     try {
       setPhotoLoading(true);
-      setError('');
-      setMessage('');
+      clearNotification();
 
-      const res = await api.delete('/users/me/photo');
+      const response = await api.delete(
+        '/users/me/photo'
+      );
 
-      saveUser(res.user);
+      saveUser(response.user);
       setSelectedPhoto(null);
-      setMessage(res.message || 'Foto profil berhasil dihapus.');
+
+      const photoInput =
+        document.getElementById('profile-photo');
+
+      if (photoInput) {
+        photoInput.value = '';
+      }
+
+      setMessage(
+        response.message ||
+          'Foto profil berhasil dihapus.'
+      );
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -139,30 +236,82 @@ export default function ProfileMahasiswa() {
     }
   }
 
+  /*
+  |--------------------------------------------------------------------------
+  | Kirim OTP
+  |--------------------------------------------------------------------------
+  */
+
   async function sendOtp() {
+    if (!user?.email) {
+      setError('Email akun tidak ditemukan.');
+      return;
+    }
+
     try {
       setLoading(true);
-      setError('');
-      setMessage('');
+      clearNotification();
 
-      const res = await api.post('/auth/password/request-otp', {
-        identifier: user?.email,
+      /*
+       * Kosongkan kolom sebelum mengirim OTP agar data autofill
+       * browser tidak ikut digunakan.
+       */
+      setOtp({
+        code: '',
+        new_password: '',
+        confirm: '',
+        sent: false,
       });
 
-      setOtp((f) => ({ ...f, sent: true }));
-      setMessage(res.message || 'Kode OTP sudah dikirim ke email kamu.');
+      const response = await api.post(
+        '/auth/password/request-otp',
+        {
+          identifier: user.email,
+        }
+      );
+
+      setOtp({
+        code: '',
+        new_password: '',
+        confirm: '',
+        sent: true,
+      });
+
+      setMessage(
+        response.message ||
+          'Kode OTP sudah dikirim ke email akun.'
+      );
     } catch (err) {
+      setOtp(createEmptyOtp());
       setError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
   }
 
-  async function changeByOtp(e) {
-    e.preventDefault();
+  /*
+  |--------------------------------------------------------------------------
+  | Ubah password dengan OTP
+  |--------------------------------------------------------------------------
+  */
 
-    if (!otp.code || !otp.new_password || !otp.confirm) {
-      setError('Kode OTP, password baru, dan konfirmasi password wajib diisi.');
+  async function changeByOtp(event) {
+    event.preventDefault();
+
+    const cleanCode = otp.code.replace(/\D/g, '');
+
+    if (!cleanCode) {
+      setError('Kode OTP wajib diisi.');
+      return;
+    }
+
+    if (cleanCode.length !== 6) {
+      setError('Kode OTP harus terdiri dari 6 angka.');
+      return;
+    }
+
+    if (!otp.new_password) {
+      setError('Password baru wajib diisi.');
       return;
     }
 
@@ -171,24 +320,37 @@ export default function ProfileMahasiswa() {
       return;
     }
 
+    if (!otp.confirm) {
+      setError('Konfirmasi password wajib diisi.');
+      return;
+    }
+
     if (otp.new_password !== otp.confirm) {
-      setError('Konfirmasi password baru belum sama.');
+      setError(
+        'Konfirmasi password baru belum sama.'
+      );
       return;
     }
 
     try {
       setLoading(true);
-      setError('');
-      setMessage('');
+      clearNotification();
 
-      const res = await api.post('/auth/password/reset', {
-        identifier: user?.email,
-        code: otp.code,
-        new_password: otp.new_password,
-      });
+      const response = await api.post(
+        '/auth/password/reset',
+        {
+          identifier: user?.email,
+          code: cleanCode,
+          new_password: otp.new_password,
+        }
+      );
 
-      setMessage(res.message || 'Password berhasil diubah.');
-      setOtp(emptyOtp);
+      setOtp(createEmptyOtp());
+
+      setMessage(
+        response.message ||
+          'Password berhasil diubah.'
+      );
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -196,11 +358,22 @@ export default function ProfileMahasiswa() {
     }
   }
 
-  async function changeManual(e) {
-    e.preventDefault();
+  /*
+  |--------------------------------------------------------------------------
+  | Ubah password dengan password lama
+  |--------------------------------------------------------------------------
+  */
 
-    if (!manual.current_password || !manual.new_password || !manual.confirm) {
-      setError('Password lama, password baru, dan konfirmasi password wajib diisi.');
+  async function changeManual(event) {
+    event.preventDefault();
+
+    if (!manual.current_password) {
+      setError('Password lama wajib diisi.');
+      return;
+    }
+
+    if (!manual.new_password) {
+      setError('Password baru wajib diisi.');
       return;
     }
 
@@ -209,23 +382,49 @@ export default function ProfileMahasiswa() {
       return;
     }
 
-    if (manual.new_password !== manual.confirm) {
-      setError('Konfirmasi password baru belum sama.');
+    if (!manual.confirm) {
+      setError('Konfirmasi password wajib diisi.');
+      return;
+    }
+
+    if (
+      manual.new_password !== manual.confirm
+    ) {
+      setError(
+        'Konfirmasi password baru belum sama.'
+      );
+      return;
+    }
+
+    if (
+      manual.current_password ===
+      manual.new_password
+    ) {
+      setError(
+        'Password baru tidak boleh sama dengan password lama.'
+      );
       return;
     }
 
     try {
       setLoading(true);
-      setError('');
-      setMessage('');
+      clearNotification();
 
-      const res = await api.post('/auth/change-password', {
-        current_password: manual.current_password,
-        new_password: manual.new_password,
-      });
+      const response = await api.post(
+        '/auth/change-password',
+        {
+          current_password:
+            manual.current_password,
+          new_password: manual.new_password,
+        }
+      );
 
-      setMessage(res.message || 'Password berhasil diubah.');
-      setManual(emptyManual);
+      setManual(createEmptyManual());
+
+      setMessage(
+        response.message ||
+          'Password berhasil diubah.'
+      );
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -234,15 +433,21 @@ export default function ProfileMahasiswa() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-5 pb-16 lg:pb-0">
-      <section className="card p-6 rounded-3xl overflow-hidden relative">
-        <div className="absolute -right-14 -top-14 w-44 h-44 rounded-full bg-primary/5 pointer-events-none" />
+    <div className="mx-auto max-w-5xl space-y-5 pb-16 lg:pb-0">
+      {/* ================= PROFIL UTAMA ================= */}
 
-        <div className="relative flex flex-col sm:flex-row sm:items-center gap-4">
-          <Avatar user={user} size="lg" className="shrink-0" />
+      <section className="card relative overflow-hidden rounded-3xl p-6">
+        <div className="pointer-events-none absolute -right-14 -top-14 h-44 w-44 rounded-full bg-primary/5" />
+
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center">
+          <Avatar
+            user={user}
+            size="lg"
+            className="shrink-0"
+          />
 
           <div className="min-w-0">
-            <h2 className="text-2xl font-extrabold truncate">
+            <h2 className="truncate text-2xl font-extrabold">
               {user?.name || 'Mahasiswa SI'}
             </h2>
 
@@ -250,28 +455,42 @@ export default function ProfileMahasiswa() {
               Mahasiswa Program Studi Sistem Informasi
             </p>
 
-            <p className="text-xs text-gray-400 mt-1 break-all">
-              {user?.email}
+            <p className="mt-1 break-all text-xs text-gray-400">
+              {user?.email || '-'}
             </p>
           </div>
 
           <Link
             to="/mahasiswa/upload"
-            className="btn-primary sm:ml-auto justify-center"
+            className="btn-primary justify-center sm:ml-auto"
           >
             <span className="material-symbols-rounded text-[18px]">
               upload_file
             </span>
+
             Upload Tugas Akhir
           </Link>
         </div>
 
-        <div className="grid sm:grid-cols-3 gap-4 mt-6">
-          <Info label="Email" value={user?.email || '-'} />
-          <Info label="NIM" value={user?.nim || '-'} />
-          <Info label="Prodi" value="Sistem Informasi" />
+        <div className="mt-6 grid gap-4 sm:grid-cols-3">
+          <Info
+            label="Email"
+            value={user?.email || '-'}
+          />
+
+          <Info
+            label="NIM"
+            value={user?.nim || '-'}
+          />
+
+          <Info
+            label="Prodi"
+            value="Sistem Informasi"
+          />
         </div>
       </section>
+
+      {/* ================= NOTIFIKASI ================= */}
 
       {error && (
         <Toast
@@ -288,160 +507,234 @@ export default function ProfileMahasiswa() {
         />
       )}
 
-      <section className="card p-5 rounded-3xl">
-        <div className="grid lg:grid-cols-[260px,1fr] gap-6">
+      {/* ================= FOTO DAN EDIT PROFIL ================= */}
+
+      <section className="card rounded-3xl p-5">
+        <div className="grid gap-6 lg:grid-cols-[260px,1fr]">
           <form
             onSubmit={uploadPhoto}
-            className="rounded-3xl bg-gray-50 border border-outline/40 p-5 space-y-4"
+            className="space-y-4 rounded-3xl border border-outline/40 bg-gray-50 p-5"
+            encType="multipart/form-data"
           >
-            <div className="flex flex-col items-center text-center gap-3">
-              <Avatar user={user} size="xl" />
+            <div className="flex flex-col items-center gap-3 text-center">
+              <Avatar
+                user={user}
+                size="xl"
+              />
 
               <div>
-                <h3 className="font-extrabold">Foto Profil</h3>
+                <h3 className="font-extrabold">
+                  Foto Profil
+                </h3>
 
-                <p className="text-xs text-gray-500 mt-1">
-                  Upload foto profil dengan format JPG, PNG, atau WEBP maksimal
-                  2 MB.
+                <p className="mt-1 text-xs text-gray-500">
+                  Upload foto profil dengan format JPG,
+                  PNG, atau WEBP maksimal 2 MB.
                 </p>
               </div>
             </div>
 
             <input
               id="profile-photo"
+              name="profile_photo"
               type="file"
               accept="image/jpeg,image/png,image/webp"
               className="input file:mr-4 file:rounded-xl file:border-0 file:bg-primary file:px-4 file:py-2 file:text-white"
-              onChange={(e) => setSelectedPhoto(e.target.files?.[0] || null)}
+              onChange={(event) => {
+                setSelectedPhoto(
+                  event.target.files?.[0] || null
+                );
+
+                clearNotification();
+              }}
             />
 
             {selectedPhoto && (
-              <p className="text-xs text-gray-500 break-all">
+              <p className="break-all text-xs text-gray-500">
                 Dipilih: {selectedPhoto.name}
               </p>
             )}
 
             <div className="flex flex-col gap-2">
               <button
-                disabled={photoLoading}
-                className="btn-primary justify-center"
                 type="submit"
+                disabled={
+                  photoLoading || !selectedPhoto
+                }
+                className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <span
                   className={`material-symbols-rounded text-[18px] ${
-                    photoLoading ? 'animate-spin' : ''
+                    photoLoading
+                      ? 'animate-spin'
+                      : ''
                   }`}
                 >
-                  {photoLoading ? 'refresh' : 'cloud_upload'}
+                  {photoLoading
+                    ? 'refresh'
+                    : 'cloud_upload'}
                 </span>
-                {photoLoading ? 'Mengupload...' : 'Upload Foto'}
+
+                {photoLoading
+                  ? 'Mengupload...'
+                  : 'Upload Foto'}
               </button>
 
               {user?.profile_photo_url && (
                 <button
-                  disabled={photoLoading}
-                  className="btn-secondary justify-center"
                   type="button"
+                  disabled={photoLoading}
+                  className="btn-secondary justify-center disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={deletePhoto}
                 >
                   <span className="material-symbols-rounded text-[18px]">
                     delete
                   </span>
+
                   Hapus Foto
                 </button>
               )}
             </div>
           </form>
 
-          <form onSubmit={updateProfile} className="space-y-4">
+          <form
+            onSubmit={updateProfile}
+            className="space-y-4"
+            autoComplete="off"
+          >
             <div>
-              <h3 className="font-extrabold text-lg">Edit Profil</h3>
+              <h3 className="text-lg font-extrabold">
+                Edit Profil
+              </h3>
 
-              <p className="text-sm text-gray-500 mt-1">
-                Email dan NIM dikunci agar data upload tetap sesuai akun
-                mahasiswa.
+              <p className="mt-1 text-sm text-gray-500">
+                Email dan NIM dikunci agar data upload
+                tetap sesuai akun mahasiswa.
               </p>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-4">
+            <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <label className="label">Nama Lengkap</label>
+                <label
+                  htmlFor="profile-name"
+                  className="label"
+                >
+                  Nama Lengkap
+                </label>
 
                 <input
+                  id="profile-name"
+                  name="profile_name"
+                  type="text"
                   className="input"
+                  autoComplete="name"
                   value={profileForm.name}
-                  onChange={(e) =>
-                    setProfileForm((f) => ({
-                      ...f,
-                      name: e.target.value,
+                  onChange={(event) =>
+                    setProfileForm((current) => ({
+                      ...current,
+                      name: event.target.value,
                     }))
                   }
                 />
               </div>
 
               <div>
-                <label className="label">Prodi</label>
+                <label
+                  htmlFor="profile-study-program"
+                  className="label"
+                >
+                  Prodi
+                </label>
 
                 <input
+                  id="profile-study-program"
+                  name="profile_study_program"
+                  type="text"
                   className="input bg-gray-50 text-gray-500"
                   value="Sistem Informasi"
+                  autoComplete="off"
                   readOnly
                 />
               </div>
 
               <div>
-                <label className="label">Email</label>
+                <label
+                  htmlFor="profile-email"
+                  className="label"
+                >
+                  Email
+                </label>
 
                 <input
+                  id="profile-email"
+                  name="profile_email"
+                  type="email"
                   className="input bg-gray-50 text-gray-500"
                   value={user?.email || ''}
+                  autoComplete="email"
                   readOnly
                 />
               </div>
 
               <div>
-                <label className="label">NIM</label>
+                <label
+                  htmlFor="profile-nim"
+                  className="label"
+                >
+                  NIM
+                </label>
 
                 <input
+                  id="profile-nim"
+                  name="profile_nim"
+                  type="text"
                   className="input bg-gray-50 text-gray-500"
                   value={user?.nim || ''}
+                  autoComplete="off"
                   readOnly
                 />
               </div>
             </div>
 
             <button
+              type="submit"
               disabled={loading}
-              className="btn-primary justify-center"
+              className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
             >
               <span className="material-symbols-rounded text-[18px]">
                 save
               </span>
-              Simpan Profil
+
+              {loading
+                ? 'Menyimpan...'
+                : 'Simpan Profil'}
             </button>
           </form>
         </div>
       </section>
 
-      <section className="card p-5 rounded-3xl">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-          <div>
-            <h3 className="font-extrabold text-lg">Ubah Password</h3>
+      {/* ================= UBAH PASSWORD ================= */}
 
-            <p className="text-sm text-gray-500 mt-1">
-              Ganti sandi melalui OTP email atau password lama.
+      <section className="card rounded-3xl p-5">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-lg font-extrabold">
+              Ubah Password
+            </h3>
+
+            <p className="mt-1 text-sm text-gray-500">
+              Ganti sandi melalui OTP email atau
+              password lama.
             </p>
           </div>
 
-          <div className="flex bg-gray-100 p-1 rounded-2xl text-sm font-bold">
+          <div className="flex rounded-2xl bg-gray-100 p-1 text-sm font-bold">
             <button
               type="button"
-              onClick={() => {
-                setMode('otp');
-                setError('');
-                setMessage('');
-              }}
-              className={`px-3 py-2 rounded-xl ${
+              onClick={() =>
+                resetPasswordForms('otp')
+              }
+              className={`rounded-xl px-3 py-2 ${
                 mode === 'otp'
                   ? 'bg-white text-primary shadow-card'
                   : 'text-gray-500'
@@ -452,12 +745,10 @@ export default function ProfileMahasiswa() {
 
             <button
               type="button"
-              onClick={() => {
-                setMode('manual');
-                setError('');
-                setMessage('');
-              }}
-              className={`px-3 py-2 rounded-xl ${
+              onClick={() =>
+                resetPasswordForms('manual')
+              }
+              className={`rounded-xl px-3 py-2 ${
                 mode === 'manual'
                   ? 'bg-white text-primary shadow-card'
                   : 'text-gray-500'
@@ -469,13 +760,34 @@ export default function ProfileMahasiswa() {
         </div>
 
         {mode === 'otp' ? (
-          <form onSubmit={changeByOtp} className="space-y-4">
-            <div className="rounded-2xl bg-gray-50 border border-outline/40 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div>
-                <p className="font-bold">Kirim OTP ke email akun</p>
+          <form
+            onSubmit={changeByOtp}
+            className="space-y-4"
+            autoComplete="off"
+          >
+            {/*
+              Membantu browser mengenali identitas akun
+              tanpa menganggap kolom OTP sebagai username.
+            */}
+            <input
+              type="text"
+              name="repota_otp_account_identifier"
+              value={user?.email || ''}
+              autoComplete="username"
+              readOnly
+              tabIndex={-1}
+              aria-hidden="true"
+              className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0"
+            />
 
-                <p className="text-sm text-gray-500 break-all">
-                  {user?.email}
+            <div className="flex flex-col gap-3 rounded-2xl border border-outline/40 bg-gray-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-bold">
+                  Kirim OTP ke email akun
+                </p>
+
+                <p className="break-all text-sm text-gray-500">
+                  {user?.email || '-'}
                 </p>
               </div>
 
@@ -483,105 +795,188 @@ export default function ProfileMahasiswa() {
                 type="button"
                 onClick={sendOtp}
                 disabled={loading}
-                className="btn-secondary justify-center"
+                className="btn-secondary justify-center disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <span className="material-symbols-rounded text-[18px]">
-                  mail
+                <span
+                  className={`material-symbols-rounded text-[18px] ${
+                    loading
+                      ? 'animate-spin'
+                      : ''
+                  }`}
+                >
+                  {loading ? 'refresh' : 'mail'}
                 </span>
-                {otp.sent ? 'Kirim Ulang OTP' : 'Kirim OTP'}
+
+                {loading
+                  ? 'Mengirim...'
+                  : otp.sent
+                    ? 'Kirim Ulang OTP'
+                    : 'Kirim OTP'}
               </button>
             </div>
 
             {otp.sent && (
-              <div className="rounded-2xl bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
-                Kode OTP sudah dikirim ke email akun. Cek inbox atau folder
-                spam.
+              <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                Kode OTP sudah dikirim ke email akun.
+                Cek inbox atau folder spam.
               </div>
             )}
 
-            <div className="grid sm:grid-cols-3 gap-4">
+            <div className="grid gap-4 sm:grid-cols-3">
               <Field
+                id="repota-otp-code"
+                name="repota_otp_verification_code"
                 label="Kode OTP"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]{6}"
                 value={otp.code}
-                onChange={(value) =>
-                  setOtp((f) => ({ ...f, code: value }))
-                }
-                placeholder="123456"
+                onChange={(value) => {
+                  const numericValue = value
+                    .replace(/\D/g, '')
+                    .slice(0, 6);
+
+                  setOtp((current) => ({
+                    ...current,
+                    code: numericValue,
+                  }));
+                }}
+                placeholder="Masukkan 6 digit"
                 maxLength={6}
-                className="tracking-[0.45em] font-bold"
+                className="font-bold tracking-[0.45em]"
               />
 
               <Field
+                id="repota-otp-new-password"
+                name="repota_otp_new_password"
                 type="password"
                 label="Password Baru"
+                autoComplete="new-password"
                 value={otp.new_password}
                 onChange={(value) =>
-                  setOtp((f) => ({ ...f, new_password: value }))
+                  setOtp((current) => ({
+                    ...current,
+                    new_password: value,
+                  }))
                 }
                 placeholder="Minimal 8 karakter"
+                minLength={8}
               />
 
               <Field
+                id="repota-otp-confirm-password"
+                name="repota_otp_confirm_password"
                 type="password"
                 label="Konfirmasi"
+                autoComplete="new-password"
                 value={otp.confirm}
                 onChange={(value) =>
-                  setOtp((f) => ({ ...f, confirm: value }))
+                  setOtp((current) => ({
+                    ...current,
+                    confirm: value,
+                  }))
                 }
                 placeholder="Ulangi password"
+                minLength={8}
               />
             </div>
 
             <button
+              type="submit"
               disabled={loading || !otp.sent}
-              className="btn-primary justify-center"
+              className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
             >
               <span className="material-symbols-rounded text-[18px]">
                 lock_reset
               </span>
-              Ubah Password dengan OTP
+
+              {loading
+                ? 'Memproses...'
+                : 'Ubah Password dengan OTP'}
             </button>
           </form>
         ) : (
-          <form onSubmit={changeManual} className="space-y-4">
-            <div className="grid sm:grid-cols-3 gap-4">
+          <form
+            onSubmit={changeManual}
+            className="space-y-4"
+            autoComplete="off"
+          >
+            <input
+              type="text"
+              name="repota_manual_account_identifier"
+              value={user?.email || ''}
+              autoComplete="username"
+              readOnly
+              tabIndex={-1}
+              aria-hidden="true"
+              className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0"
+            />
+
+            <div className="grid gap-4 sm:grid-cols-3">
               <Field
+                id="repota-current-password"
+                name="repota_current_password_manual"
                 type="password"
                 label="Password Lama"
+                autoComplete="off"
                 value={manual.current_password}
                 onChange={(value) =>
-                  setManual((f) => ({ ...f, current_password: value }))
+                  setManual((current) => ({
+                    ...current,
+                    current_password: value,
+                  }))
                 }
+                placeholder="Masukkan password lama"
               />
 
               <Field
+                id="repota-manual-new-password"
+                name="repota_manual_new_password"
                 type="password"
                 label="Password Baru"
+                autoComplete="new-password"
                 value={manual.new_password}
                 onChange={(value) =>
-                  setManual((f) => ({ ...f, new_password: value }))
+                  setManual((current) => ({
+                    ...current,
+                    new_password: value,
+                  }))
                 }
                 placeholder="Minimal 8 karakter"
+                minLength={8}
               />
 
               <Field
+                id="repota-manual-confirm-password"
+                name="repota_manual_confirm_password"
                 type="password"
                 label="Konfirmasi"
+                autoComplete="new-password"
                 value={manual.confirm}
                 onChange={(value) =>
-                  setManual((f) => ({ ...f, confirm: value }))
+                  setManual((current) => ({
+                    ...current,
+                    confirm: value,
+                  }))
                 }
+                placeholder="Ulangi password"
+                minLength={8}
               />
             </div>
 
             <button
+              type="submit"
               disabled={loading}
-              className="btn-primary justify-center"
+              className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
             >
               <span className="material-symbols-rounded text-[18px]">
                 lock
               </span>
-              Simpan Password Baru
+
+              {loading
+                ? 'Menyimpan...'
+                : 'Simpan Password Baru'}
             </button>
           </form>
         )}
@@ -592,35 +987,65 @@ export default function ProfileMahasiswa() {
 
 function Info({ label, value }) {
   return (
-    <div className="rounded-2xl bg-gray-50 border border-outline/40 p-4 min-w-0">
-      <p className="text-xs text-gray-500">{label}</p>
-      <p className="font-bold mt-1 break-words">{value}</p>
+    <div className="min-w-0 rounded-2xl border border-outline/40 bg-gray-50 p-4">
+      <p className="text-xs text-gray-500">
+        {label}
+      </p>
+
+      <p className="mt-1 break-words font-bold">
+        {value}
+      </p>
     </div>
   );
 }
 
 function Field({
+  id,
+  name,
   label,
   value,
   onChange,
   type = 'text',
   placeholder = '',
   maxLength,
+  minLength,
+  inputMode,
+  pattern,
+  autoComplete = 'off',
   className = '',
 }) {
   return (
     <div>
-      <label className="label">
-        {label} <span className="text-red-500">*</span>
+      <label
+        htmlFor={id}
+        className="label"
+      >
+        {label}{' '}
+        <span className="text-red-500">
+          *
+        </span>
       </label>
 
       <input
+        id={id}
+        name={name}
         type={type}
         className={`input ${className}`}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(event) =>
+          onChange(event.target.value)
+        }
         placeholder={placeholder}
         maxLength={maxLength}
+        minLength={minLength}
+        inputMode={inputMode}
+        pattern={pattern}
+        autoComplete={autoComplete}
+        autoCapitalize="none"
+        spellCheck={false}
+        data-lpignore="true"
+        data-1p-ignore="true"
+        required
       />
     </div>
   );

@@ -1,21 +1,32 @@
 const multer = require('multer');
 
-const storage = multer.memoryStorage();
+const DEFAULT_MAX_FILE_SIZE_MB = 10;
+const PDF_MIME_TYPES = new Set(['application/pdf']);
 
-const fileFilter = (req, file, cb) => {
-  if (file.mimetype !== 'application/pdf') {
-    return cb(new Error('File harus berformat PDF.'));
-  }
-
-  return cb(null, true);
-};
+function positiveNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 const uploadPdf = multer({
-  storage,
-  fileFilter,
+  storage: multer.memoryStorage(),
   limits: {
-    fileSize: Number(process.env.MAX_FILE_SIZE_MB || 10) * 1024 * 1024
-  }
+    files: 1,
+    fileSize:
+      positiveNumber(process.env.MAX_FILE_SIZE_MB, DEFAULT_MAX_FILE_SIZE_MB) *
+      1024 *
+      1024,
+  },
+  fileFilter: (req, file, callback) => {
+    if (!PDF_MIME_TYPES.has(file.mimetype)) {
+      const error = new Error('Dokumen harus berformat PDF.');
+      error.status = 400;
+      error.code = 'INVALID_PDF_TYPE';
+      return callback(error);
+    }
+
+    return callback(null, true);
+  },
 });
 
 module.exports = uploadPdf;

@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const path = require('path');
-const XLSX = require('xlsx');
+const readXlsxFile = require('read-excel-file/node');
 const pool = require('../src/config/db');
 const { categorizeRepository } = require('../src/utils/categorize');
 
@@ -39,14 +39,12 @@ function excelDateToJS(value) {
   }
 
   if (typeof value === 'number') {
-    const parsed = XLSX.SSF.parse_date_code(value);
-    if (!parsed) return null;
-
-    const yyyy = parsed.y;
-    const mm = String(parsed.m).padStart(2, '0');
-    const dd = String(parsed.d).padStart(2, '0');
-
-    return `${yyyy}-${mm}-${dd}`;
+    // Excel menggunakan epoch 1899-12-30 untuk serial tanggal.
+    const milliseconds = Math.round(value * 86400 * 1000);
+    const date = new Date(Date.UTC(1899, 11, 30) + milliseconds);
+    return Number.isNaN(date.getTime())
+      ? null
+      : date.toISOString().slice(0, 10);
   }
 
   const text = cleanText(value);
@@ -72,19 +70,6 @@ function getYear(value, fallbackDate) {
   }
 
   return null;
-}
-
-function sheetToRows(workbook, sheetName) {
-  const sheet = workbook.Sheets[sheetName];
-  if (!sheet) {
-    throw new Error(`Sheet tidak ditemukan: ${sheetName}`);
-  }
-
-  return XLSX.utils.sheet_to_json(sheet, {
-    header: 1,
-    defval: null,
-    raw: true
-  });
 }
 
 function validTitle(title) {
@@ -262,13 +247,10 @@ async function main() {
   const client = await pool.connect();
 
   try {
-    const workbook = XLSX.readFile(EXCEL_PATH, {
-      cellDates: false,
-      raw: true
-    });
-
-    const semproRows = sheetToRows(workbook, 'Archive Sempro_2020-2023');
-    const pendadaranRows = sheetToRows(workbook, 'Archive Pendadaran 2020-2023');
+    const [semproRows, pendadaranRows] = await Promise.all([
+      readXlsxFile(EXCEL_PATH, { sheet: 'Archive Sempro_2020-2023' }),
+      readXlsxFile(EXCEL_PATH, { sheet: 'Archive Pendadaran 2020-2023' }),
+    ]);
 
     const semproData = buildSemproRows(semproRows);
     const pendadaranData = buildPendadaranRows(pendadaranRows);
